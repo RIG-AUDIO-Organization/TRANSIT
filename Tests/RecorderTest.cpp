@@ -86,6 +86,31 @@ int run() {
     check(std::abs(s[0] - L[100]) < 1e-6 && std::abs(s[1] - R[100]) < 1e-6,
           "sample roundtrip", s[0], L[100]);
 
+    // Reusing a filename must never truncate an earlier recording.
+    const auto protectedPath = (dir / "existing.wav").string();
+    {
+        FILE* existing = fopen(protectedPath.c_str(), "wb");
+        check(existing != nullptr, "create protected file");
+        if (existing) {
+            const char marker[] = "KEEP";
+            check(fwrite(marker, 1, 4, existing) == 4, "write protected marker");
+            fclose(existing);
+        }
+    }
+    check(!rec.start(protectedPath, rate), "refuse existing WAV path");
+    {
+        FILE* existing = fopen(protectedPath.c_str(), "rb");
+        check(existing != nullptr, "protected file retained");
+        if (existing) {
+            char marker[4] = {};
+            check(fread(marker, 1, 4, existing) == 4, "read protected marker");
+            check(marker[0] == 'K' && marker[1] == 'E'
+                  && marker[2] == 'E' && marker[3] == 'P',
+                  "existing WAV unchanged");
+            fclose(existing);
+        }
+    }
+
     std::filesystem::remove_all(dir, ec);
     if (failures == 0)
         std::printf("RECORDER_TEST PASS\n");

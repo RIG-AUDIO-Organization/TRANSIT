@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -176,12 +177,40 @@ int run() {
         check(std::abs(boost - 2.0) < 0.1, "high boost x", boost, 2.0);
     }
 
+    // Regression: crossfader smooths to deck B even with A stopped.
+    // Do not snap after the new target is assigned.
+    {
+        lean::Mixer m;
+        m.setOutputRate(kRate);
+        m.channel(1).deck.load(srcB, kRate);
+        m.channel(1).deck.play(true);
+        m.setCrossfader(0.0f);
+        m.snap();
+        m.setCrossfader(1.0f);
+        float left[512] = {}, right[512] = {};
+        for (int block = 0; block < 12; ++block)
+            m.render(left, right, 512);
+        float peak = 0.0f;
+        for (float v : left)
+            peak = std::max(peak, std::abs(v));
+        check(peak > 0.40f, "crossfader follows while A stopped", peak, 0.5);
+    }
+
     if (failures == 0)
         std::printf("MIXER_TEST PASS\n");
     else
         std::printf("MIXER_TEST FAIL (%d)\n", failures);
     return failures == 0 ? 0 : 1;
 }
+
+struct NonFiniteAux : public lean::AuxHost {
+    void processAux(int aux, float* left, float* right, int n) override {
+        if (aux != 0)
+            return;
+        for (int i = 0; i < n; ++i)
+            left[i] = right[i] = std::numeric_limits<float>::quiet_NaN();
+    }
+};
 
 struct StubAux : public lean::AuxHost {
     float gain = 0.5f;
@@ -247,6 +276,25 @@ int runAux() {
         renderAll(m, L, R, frames);
         const double d = 20.0 * log10(peakDiff(L, ref) + 1e-30);
         check(d < -90.0, "no-host null dB", d, -90.0);
+    }
+
+    // Invalid VST output cannot reach soundcard output samples.
+    {
+        NonFiniteAux broken;
+        lean::Mixer m;
+        m.setOutputRate(kRate);
+        m.setAuxHost(&broken);
+        m.channel(0).deck.load(srcA, kRate);
+        m.channel(0).deck.play(true);
+        m.setCrossfader(0.0f);
+        m.setSend(0, 0, 1.0f);
+        m.snap();
+        float L[512] = {}, R[512] = {};
+        m.render(L, R, 512);
+        bool finite = true;
+        for (int i = 0; i < 512; ++i)
+            finite = finite && std::isfinite(L[i]) && std::isfinite(R[i]);
+        check(finite, "non-finite aux output suppressed");
     }
 
     if (failures == 0)

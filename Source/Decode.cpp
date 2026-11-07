@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <string_view>
 
 // miniaudio: decode-only, no device I/O, no generation, no runtime linking.
@@ -33,6 +34,10 @@
 namespace lean {
 namespace {
 
+// Temporary memory bounds until whole-file decoding is replaced by streaming.
+constexpr size_t kMaxEncodedBytes = size_t{512} * 1024 * 1024;
+constexpr size_t kMaxDecodedFloats = kMaxEncodedBytes / sizeof(float);
+
 bool hasExtension(const std::string& path, std::string_view ext) {
     if (path.size() < ext.size())
         return false;
@@ -57,13 +62,23 @@ bool decodeWithMiniAudio(const void* fileBytes, size_t fileSize,
     }
     ma_uint64 frames = 0;
     ma_decoder_get_length_in_pcm_frames(&decoder, &frames);
+    if (frames > kMaxDecodedFloats / 2) {
+        ma_decoder_uninit(&decoder);
+        error = "audio exceeds the 512 MiB decoded PCM safety limit";
+        return false;
+    }
     std::vector<float> pcm;
-    if (frames > 0 && frames < (1ULL << 32))
+    if (frames > 0)
         pcm.reserve((size_t)frames * 2);
     float chunk[4096 * 2];
     for (;;) {
         ma_uint64 got = 0;
         ma_result r = ma_decoder_read_pcm_frames(&decoder, chunk, 4096, &got);
+        if (got > (kMaxDecodedFloats - pcm.size()) / 2) {
+            ma_decoder_uninit(&decoder);
+            error = "audio exceeds the 512 MiB decoded PCM safety limit";
+            return false;
+        }
         if (got > 0)
             pcm.insert(pcm.end(), chunk, chunk + (size_t)got * 2);
         if (r != MA_SUCCESS || got == 0)
@@ -224,6 +239,11 @@ bool decodeFile(const std::string& utf8Path, DecodedAudio& out, std::string& err
     if (size <= 0) {
         fclose(f);
         error = "file is empty";
+        return false;
+    }
+    if ((unsigned long long)size > (unsigned long long)kMaxEncodedBytes) {
+        fclose(f);
+        error = "audio file exceeds the 512 MiB input safety limit";
         return false;
     }
     std::vector<unsigned char> bytes((size_t)size);

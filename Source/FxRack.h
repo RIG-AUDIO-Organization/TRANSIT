@@ -40,7 +40,7 @@ public:
     // -- message thread --
     juce::StringArray scanVst3(); // bundle display names, no loading
     bool loadPlugin(int slot, const juce::String& bundlePath, juce::String& error);
-    void unloadPlugin(int slot);
+    bool unloadPlugin(int slot);
     void setBypass(int slot, bool bypassed);
     bool isBypassed(int slot) const;
     juce::String slotName(int slot) const;
