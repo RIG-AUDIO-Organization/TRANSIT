@@ -280,7 +280,7 @@ public:
     bool loadAuxPlugin(int aux, const juce::String& bundlePath, juce::String& error) {
         return fxRack.loadPlugin(aux, bundlePath, error);
     }
-    void unloadAuxPlugin(int aux) { fxRack.unloadPlugin(aux); }
+    bool unloadAuxPlugin(int aux) { return fxRack.unloadPlugin(aux); }
     void setAuxBypass(int aux, bool bypassed) { fxRack.setBypass(aux, bypassed); }
     bool auxBypassed(int aux) const { return fxRack.isBypassed(aux); }
     juce::String auxName(int aux) const { return fxRack.slotName(aux); }

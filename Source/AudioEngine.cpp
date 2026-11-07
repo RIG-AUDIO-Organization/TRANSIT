@@ -396,7 +396,9 @@ bool AudioEngine::toggleRecord(juce::String& status) {    if (recorder.isRecordi
                    .getChildFile("TRANSIT");
     dir.createDirectory();
     const auto stamp = juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S");
-    const auto file = dir.getChildFile("TRANSIT-" + stamp + ".wav");
+    // Choose a free name, backed by Recorder's exclusive create to
+    // protect against collisions between independent app instances.
+    const auto file = dir.getNonexistentChildFile("TRANSIT-" + stamp, ".wav");
     double rate = 48000.0;
     if (auto* device = deviceManager.getCurrentAudioDevice())
         rate = device->getCurrentSampleRate();
@@ -647,7 +649,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const*, int,
             std::fill(outputChannelData[ch], outputChannelData[ch] + numSamples, 0.0f);
 
     float* left = numOutputChannels > 0 ? outputChannelData[0] : nullptr;
-    float* right = numOutputChannels > 1 ? outputChannelData[1] : left;
+    float* right = numOutputChannels > 1 ? outputChannelData[1] : nullptr;
     float* phL = numOutputChannels > 3 ? outputChannelData[2] : nullptr;
     float* phR = numOutputChannels > 3 ? outputChannelData[3] : nullptr;
 
@@ -660,8 +662,19 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const*, int,
         applyMidiEvent(events[i]);
 
     const int64_t t0 = juce::Time::getHighResolutionTicks();
-    if (left)
-        mixer.render(left, right ? right : left, phL, phR, numSamples);
+    if (left && right) {
+        mixer.render(left, right, phL, phR, numSamples);
+    } else if (left) {
+        // Mono-only hardware receives the average of separate L/R channels,
+        // not two accumulations into the same output pointer.
+        float monoL[512], monoR[512];
+        for (int off = 0; off < numSamples; off += 512) {
+            const int n = std::min(512, numSamples - off);
+            mixer.render(monoL, monoR, n);
+            for (int i = 0; i < n; ++i)
+                left[off + i] = 0.5f * (monoL[i] + monoR[i]);
+        }
+    }
     const int64_t t1 = juce::Time::getHighResolutionTicks();
     blockFrame += (uint64_t)numSamples;
     // Publish the audio frame counter for MIDI stamping. Events stamped with

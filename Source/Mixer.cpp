@@ -183,6 +183,10 @@ void Mixer::render(float* left, float* right, float* phonesL, float* phonesR,
     int done = 0;
     while (done < numSamples) {
         const int m = std::min(512, numSamples - done);
+        // Advance the crossfader once per output sample, even if A is stopped.
+        float xfValues[512];
+        for (int i = 0; i < m; ++i)
+            xfValues[i] = xfade.next(coeff);
         float cueL[512], cueR[512];
         float auxL[kAuxBuses][512], auxR[kAuxBuses][512];
         for (int i = 0; i < m; ++i) {
@@ -204,9 +208,7 @@ void Mixer::render(float* left, float* right, float* phonesL, float* phonesR,
                 tmpL[i] = tmpR[i] = 0.0f;
             strip.deck.render(tmpL, tmpR, m);
             for (int i = 0; i < m; ++i) {
-                // Advance the shared crossfader once per sample (first strip);
-                // the second strip reuses the same value.
-                const float xf = (s == 0) ? xfade.next(coeff) : xfade.current();
+                const float xf = xfValues[i];
                 const float w = s == 0 ? (float)cos(xf * 0.5 * kPi)
                                        : (float)sin(xf * 0.5 * kPi);
                 const float trimFader = strip.trim.next(coeff) * strip.fader.next(coeff);
@@ -272,6 +274,16 @@ void Mixer::render(float* left, float* right, float* phonesL, float* phonesR,
             }
         }
         done += m;
+    }
+    // Suppress non-finite samples emitted by hosted effects.
+    // Finite overload/headroom management is a separate task.
+    for (int i = 0; i < numSamples; ++i) {
+        if (!std::isfinite(left[i])) left[i] = 0.0f;
+        if (!std::isfinite(right[i])) right[i] = 0.0f;
+        if (doPhones) {
+            if (!std::isfinite(phonesL[i])) phonesL[i] = 0.0f;
+            if (!std::isfinite(phonesR[i])) phonesR[i] = 0.0f;
+        }
     }
 }
 

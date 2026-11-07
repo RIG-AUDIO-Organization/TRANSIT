@@ -67,10 +67,11 @@ FILE* openWrite(const std::string& utf8) {
     std::vector<wchar_t> w((size_t)n);
     MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, w.data(), n);
     FILE* f = nullptr;
-    _wfopen_s(&f, w.data(), L"wb");
+    // Exclusive creation: never truncate a recording made earlier.
+    _wfopen_s(&f, w.data(), L"wbx");
     return f;
 #else
-    return fopen(utf8.c_str(), "wb");
+    return fopen(utf8.c_str(), "wbx");
 #endif
 }
 

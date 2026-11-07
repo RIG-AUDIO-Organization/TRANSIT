@@ -451,9 +451,8 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
     searchDebounce.owner = this;
     searchBox.onTextChange = [this] { searchDebounce.startTimer(150); };
     fileModel.onDoubleClick = [this](int row) { loadBrowserRow(row); };
-    // Auto-play and header refresh once an async load commits (review S5).
+    // Loading a track never starts audible output without a Play action.
     engine.onDeckReady = [this](int deck) {
-        engine.play(deck, true);
         updateDeckHeader(deck);
     };
     // Warm the VST3 cache off the message thread before the FX menu opens
@@ -851,6 +850,7 @@ void MainComponent::openSettings() {
         },
         [this] {
             midiMap = lean::MidiMap();
+            applyMidiRouting(); // also clear the live audio-engine mappings
             saveMidiMap();
             sysStatus.setText("MIDI map reset", juce::dontSendNotification);
         },
@@ -980,7 +980,10 @@ void MainComponent::showBrowser(bool show) {
 void MainComponent::pickAuxPlugin(int aux) {
     juce::PopupMenu menu;
     menu.addItem("Unload", false, false, [this, aux] {
-        engine.unloadAuxPlugin(aux);
+        if (!engine.unloadAuxPlugin(aux)) {
+            sysStatus.setText("AUX busy: unload not completed", juce::dontSendNotification);
+            return;
+        }
         auxStrips[aux].slot.setButtonText("Empty");
         auxStrips[aux].edit.setEnabled(false);
         saveSettings();

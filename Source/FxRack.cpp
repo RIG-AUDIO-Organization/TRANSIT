@@ -63,11 +63,7 @@ bool FxRack::loadPlugin(int slot, const juce::String& bundlePath,
                         juce::String& error) {
     if (slot < 0 || slot >= kSlots)
         return false;
-    if (!tryUnloadPlugin(slot)) {
-        error = "Audio engine busy - retry";
-        return false;
-    }
-
+    // Validate and prepare a replacement before touching the live plugin.
     juce::VST3PluginFormat format;
     juce::OwnedArray<juce::PluginDescription> found;
     format.findAllTypesForFile(found, bundlePath);
@@ -83,11 +79,15 @@ bool FxRack::loadPlugin(int slot, const juce::String& bundlePath,
         return false;
     }
     instance->prepareToPlay(rate, blockSize);
+    if (!closeSlotEditor(slot)) {
+        error = "Audio engine busy - retry";
+        return false;
+    }
     {
         std::lock_guard<std::mutex> lock(stageMutex);
         slots[(size_t)slot].staged = std::move(instance);
+        slots[(size_t)slot].stagedReady.store(true, std::memory_order_seq_cst);
     }
-    slots[(size_t)slot].stagedReady.store(true, std::memory_order_seq_cst);
     slots[(size_t)slot].name = found[0]->name;
     paths[(size_t)slot] = bundlePath;
     return true;
@@ -118,10 +118,10 @@ bool FxRack::tryUnloadPlugin(int slot) {
     return true;
 }
 
-void FxRack::unloadPlugin(int slot) {
+bool FxRack::unloadPlugin(int slot) {
     if (slot < 0 || slot >= kSlots)
-        return;
-    (void)tryUnloadPlugin(slot); // busy: leave for a retry; UI keeps state
+        return false;
+    return tryUnloadPlugin(slot);
 }
 
 void FxRack::setBypass(int slot, bool bypassed) {
@@ -159,12 +159,10 @@ void FxRack::showEditor(int slot) {
     if (slot < 0 || slot >= kSlots)
         return;
     auto& window = editors[(size_t)slot];
-    window.reset();
-    // Editor creation touches the active instance: suspend first. The audio
-    // thread acknowledges at the next block boundary and stays silent
-    // throughout, so createEditorAndMakeActive cannot race processBlock.
+    // Both editor teardown and creation may touch the active plugin.
     if (!suspendProcessing())
         return; // timeout: audio did not acknowledge; caller may retry
+    window.reset();
     juce::AudioPluginInstance* target = slots[(size_t)slot].active.get();
     if (target && target->hasEditor()) {
         if (auto* ed = target->createEditorAndMakeActive()) {
@@ -173,8 +171,8 @@ void FxRack::showEditor(int slot) {
             opts.dialogTitle = target->getName();
             opts.useNativeTitleBar = true;
             opts.resizable = true;
-            resumeProcessing();
             window.reset(opts.launchAsync());
+            resumeProcessing();
             return;
         }
     }
