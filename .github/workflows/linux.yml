@@ -91,7 +91,7 @@ jobs:
           mkdir -p release-app
           cp build/TRANSIT_artefacts/Release/TRANSIT release-app/TRANSIT
           {
-            echo 'TRANSIT Linux CI build (gcc Release, branch feat/gui-waveform-stability).'
+            echo 'TRANSIT Linux CI build (gcc Release, current branch/commit).'
             echo 'The artifact service strips file modes; make it executable first:'
             echo '  chmod +x TRANSIT && ./TRANSIT'
             echo 'Runtime libs (same set CI installs): libasound2, freetype,'
@@ -152,14 +152,16 @@ jobs:
       - name: Build headless test targets
         run: >
           cmake --build build-asan --parallel --
-          NullRender AutoCueTest DecodeTest MixerTest KeylockTest WaveformTest
+          NullRender AutoCueTest TrimDialTest ChannelModeTest
+          DecodeTest MixerTest KeylockTest WaveformTest
           MidiQueueTest LoadScheduleTest DeckLoadTest FxScanTest
           LibraryTest MidiMapTest RecorderTest AnalyzeTest SyncTest
           UiStateTest
 
-      - name: Test under sanitizers
-        # fxrack_test is JUCE-linked and intentionally not built here, so
-        # exclude it; every other registered test is in the build list.
+      - name: Verify sanitizer test executables and run CTest
+        # fxrack_test is JUCE-linked and intentionally not built here.
+        # This also fails if a new registered headless test is omitted
+        # from the explicit sanitizer target list (CTest "Not Run").
         run: ctest --test-dir build-asan --output-on-failure -E "fxrack_test"
 
       - name: Upload sanitizer logs
