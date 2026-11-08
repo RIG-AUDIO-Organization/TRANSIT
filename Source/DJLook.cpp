@@ -1,6 +1,7 @@
 // TRANSIT — DJ Software / SPDX-License-Identifier: GPL-3.0-only
 
 #include "DJLook.h"
+#include "TrimDial.h"
 
 #include <cmath>
 
@@ -196,6 +197,20 @@ void DJLook::drawRotarySlider(juce::Graphics& g, int x, int y, int width, int he
         else
             fill.addCentredArc(cx, cy, radius, radius, 0.0f, pointerAngle, center,
                                true);
+    } else if (slider.getProperties().contains("trim")) {
+        // Audio gain is 0..1.25, but 1.0 is unity (0 dB). Draw unity at
+        // twelve o'clock so the trim reads like a traditional DJ mixer.
+        const float midAngle = (rotaryStartAngle + rotaryEndAngle) * 0.5f;
+        const float normalized = (float)lean::trimDialPosition(
+            slider.getValue(), slider.getMaximum());
+        pointerAngle = rotaryStartAngle
+            + normalized * (rotaryEndAngle - rotaryStartAngle);
+        if (normalized >= 0.5f)
+            fill.addCentredArc(cx, cy, radius, radius, 0.0f,
+                               midAngle, pointerAngle, true);
+        else
+            fill.addCentredArc(cx, cy, radius, radius, 0.0f,
+                               pointerAngle, midAngle, true);
     } else {
         fill.addCentredArc(cx, cy, radius, radius, 0.0f, rotaryStartAngle, angle,
                            true);

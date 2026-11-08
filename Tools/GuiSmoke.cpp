@@ -396,8 +396,19 @@ int main(int argc, char** argv) {
     SmokeWindow window;
     MainComponent& content = window.content();
 
+    // Before loading real files, the first-run browser must have clear
+    // examples, not a deceptive set of playable fake tracks.
+    content.harnessClearBrowser();
+    if (!content.harnessShowsExampleTracks()) {
+        fail("empty browser lacks labeled example tracks");
+        return 1;
+    }
     // G6: seed the browser folder so frames show metadata rows + selection.
     content.harnessSetBrowserPath(outDir.getFullPathName());
+    if (content.harnessShowsExampleTracks()) {
+        fail("examples not removed after loading real folder");
+        return 1;
+    }
 
     // Pass 1: empty state (before any file is loaded).
     for (const Viewport& vp : kViewports) {
