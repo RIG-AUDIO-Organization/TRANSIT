@@ -67,6 +67,28 @@ First-party sources build with a strict, warnings-as-errors flag set
 through system includes or separate targets and is never gated by these
 flags. See `CMakeLists.txt` for the authoritative list.
 
+## Downloadable developer-preview builds
+
+The [preview packages workflow](.github/workflows/preview-build.yml) packages
+experimental **Linux x86-64** and **Windows x64** GUI applications. It runs on
+the deck-interface preview branch, on pull requests to `main`, and is also
+manually dispatchable once merged to the default branch.
+
+1. Open [GitHub Actions: TRANSIT preview packages](../../actions/workflows/preview-build.yml).
+2. Select the latest successful run and scroll to **Artifacts**.
+3. Download `TRANSIT-preview-Linux-x86_64` or
+   `TRANSIT-preview-Windows-x64`; unpack the GitHub artifact ZIP, then
+   unpack the enclosed `.tar.gz` or `.zip` application package.
+4. On Linux, `chmod +x TRANSIT` and run `./TRANSIT` on a supported
+   desktop with system audio/X11 libraries. On Windows, run `TRANSIT.exe`.
+   See the package's `README-TESTING.txt`.
+
+These are **unreleased, unsigned, untested-on-hardware developer previews**
+and require operating-system runtime libraries. They are *not* portable
+AppImages, installers, or official GitHub Releases. CI does not establish
+suitability for live DJ use. If the workflow fails, no working artifact is
+guaranteed.
+
 ## Tests
 
 Headless gates run via CTest (no audio hardware or display required):

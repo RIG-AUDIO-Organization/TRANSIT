@@ -69,7 +69,8 @@ void MainComponent::WaveformView::paint(juce::Graphics& g) {
             const int yTop = mid - (int)((double)mx * (double)half);
             const int yBot = mid - (int)((double)mn * (double)half);
             const bool played = t0 < pos;
-            g.setColour(played ? DJLook::cyan.withAlpha(0.35f) : DJLook::cyan);
+            const auto tint = deck == 0 ? DJLook::accent : DJLook::cyan;
+            g.setColour(played ? tint.withAlpha(0.35f) : tint);
             g.fillRect(x, juce::jmin(yTop, yBot), 1, juce::jmax(1, yBot - yTop));
         }
         const double posX = (pos - start) / span * (double)W;
@@ -120,8 +121,9 @@ void MainComponent::WaveformView::paintOverview(juce::Graphics& g, int W,
             const int yTop = mid - (int)((double)mx * (double)half);
             const int yBot = mid - (int)((double)mn * (double)half);
             const bool played = t1 <= pos;
-            g.setColour(played ? DJLook::cyan.withAlpha(0.45f)
-                               : DJLook::cyan.withAlpha(0.75f));
+            const auto tint = deck == 0 ? DJLook::accent : DJLook::cyan;
+            g.setColour(played ? tint.withAlpha(0.45f)
+                               : tint.withAlpha(0.75f));
             g.fillRect(x, juce::jmin(yTop, yBot), 1, juce::jmax(1, yBot - yTop));
         }
         const int px = juce::jlimit(0, W - 1, (int)(pos / len * (double)W));
@@ -256,6 +258,15 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
     const char* knobNames[4] = { "GAIN", "LOW", "MID", "HIGH" };
     for (int d = 0; d < 2; ++d) {
         auto& s = strips[d];
+        addAndMakeVisible(s.surface);
+        s.surface.setInterceptsMouseClicks(false, false);
+        s.surface.toBack();
+        juce::Component* readouts[] = {
+            &s.bpmValue, &s.pitchValue, &s.beatCaption, &s.elapsedCaption,
+            &s.remainingCaption, &s.remaining, &s.tempoReset
+        };
+        for (auto* c : readouts)
+            addAndMakeVisible(c);
         addAndMakeVisible(s.header);
         addAndMakeVisible(s.zoomInBtn);
         addAndMakeVisible(s.zoomOutBtn);
@@ -263,7 +274,28 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
         s.sync.setVisible(false); // Free mode default: no sync buttons
         s.header.setText("DECK " + juce::String(names[d]), juce::dontSendNotification);
         s.header.setFont(juce::Font(juce::FontOptions{}.withHeight(17.0f)).boldened());
-        s.header.setColour(juce::Label::textColourId, DJLook::accent);
+        s.header.setColour(juce::Label::textColourId,
+                           d == 0 ? DJLook::accent : DJLook::cyan);
+        s.bpmValue.setText("--.- BPM", juce::dontSendNotification);
+        s.bpmValue.setJustificationType(juce::Justification::centredRight);
+        s.bpmValue.setColour(juce::Label::textColourId, DJLook::ink);
+        s.bpmValue.setFont(juce::Font(juce::FontOptions{}.withHeight(16.0f)).boldened());
+        s.pitchValue.setText("+0.0%", juce::dontSendNotification);
+        s.pitchValue.setJustificationType(juce::Justification::centredRight);
+        s.pitchValue.setColour(juce::Label::textColourId, DJLook::accent);
+        s.pitchValue.setFont(juce::Font(juce::FontOptions{}.withHeight(16.0f)).boldened());
+        s.beatCaption.setText("BEAT JUMP", juce::dontSendNotification);
+        s.elapsedCaption.setText("ELAPSED", juce::dontSendNotification);
+        s.remainingCaption.setText("REMAINING", juce::dontSendNotification);
+        for (auto* cap : { &s.beatCaption, &s.elapsedCaption, &s.remainingCaption }) {
+            cap->setColour(juce::Label::textColourId, DJLook::dimInk);
+            cap->setFont(juce::Font(juce::FontOptions{}.withHeight(11.0f)).boldened());
+        }
+        s.remaining.setText("--:--", juce::dontSendNotification);
+        s.remaining.setColour(juce::Label::textColourId,
+                              d == 0 ? DJLook::accent : DJLook::cyan);
+        s.remaining.setFont(juce::Font(juce::FontOptions{}.withHeight(20.0f)).boldened());
+        s.time.setFont(juce::Font(juce::FontOptions{}.withHeight(20.0f)).boldened());
         addAndMakeVisible(s.open);
         addAndMakeVisible(s.play);
         addAndMakeVisible(s.cue);
@@ -310,8 +342,17 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
                 strips[d].wave->zoomOut();
         };
 
-        s.open.setButtonText("Open " + juce::String(names[d]));
+        s.open.setButtonText("LOAD " + juce::String(names[d]));
+        s.open.setTooltip("Load a track without starting playback");
         s.open.onClick = [this, d] { openFile(d); };
+        s.play.getProperties().set("deckPlay", 1);
+        s.cue.getProperties().set("deckCue", 1);
+        if (d == 1) {
+            s.play.getProperties().set("deckB", 1);
+            s.cue.getProperties().set("deckB", 1);
+        }
+        s.play.setTooltip("Play / pause");
+        s.cue.setTooltip("Hold for cue preview; while playing, return to cue");
         s.play.setClickingTogglesState(true);
         s.play.onClick = [this, d] {
             engine.play(d, strips[d].play.getToggleState());
@@ -327,11 +368,23 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
         cueHolds[d].owner = this;
         cueHolds[d].deck = d;
         s.cue.addMouseListener(&cueHolds[d], false);
+        s.back.setButtonText("-4");
+        s.fwd.setButtonText("+4");
+        s.back.setTooltip("Jump backward four beats");
+        s.fwd.setTooltip("Jump forward four beats");
         s.back.onClick = [this, d] { engine.jumpBeats(d, -4.0); };
         s.fwd.onClick = [this, d] { engine.jumpBeats(d, 4.0); };
+        s.key.setButtonText("KEY");
+        s.key.setTooltip("Keep musical pitch constant as tempo changes");
+        s.tempoReset.setTooltip("Reset tempo to original speed");
+        s.tempoReset.onClick = [this, d] { strips[d].tempo.setValue(1.0); };
 
         s.tempo.setRange(0.5, 1.5, 0.001);
         s.tempo.setValue(1.0);
+        s.tempo.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+        s.tempo.setDoubleClickReturnValue(true, 1.0);
+        s.tempo.getProperties().set("pitch", 1);
+        s.tempo.setTooltip("Pitch/tempo: -50% to +50%; double-click for 0%");
         s.tempo.onValueChange = [this, d] { engine.setTempo(d, strips[d].tempo.getValue()); };
 
         s.gain.setRange(0.0, 1.25, 0.001);
@@ -375,9 +428,11 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
         s.stateChip.setColour(juce::Label::textColourId, DJLook::dimInk);
         s.stateChip.setFont(
             juce::Font(juce::FontOptions{}.withHeight(11.0f)).boldened());
-        s.stateChip.setJustificationType(juce::Justification::centredLeft);
-        s.status.setText({}, juce::dontSendNotification);
-        s.time.setText("--:-- / --:--", juce::dontSendNotification);
+        s.stateChip.setJustificationType(juce::Justification::centredRight);
+        s.status.setText("LOAD A TRACK", juce::dontSendNotification);
+        s.status.setFont(juce::Font(juce::FontOptions{}.withHeight(15.0f)).boldened());
+        s.status.setColour(juce::Label::textColourId, DJLook::ink);
+        s.time.setText("--:--", juce::dontSendNotification);
     }
 
     addAndMakeVisible(xfade);
@@ -575,11 +630,12 @@ void MainComponent::SearchDebounce::timerCallback() {
 }
 
 void MainComponent::updateDeckHeader(int deck) {
-    const double bpm = engine.getBpm(deck);
-    juce::String text = deck == 0 ? "DECK A" : "DECK B";
-    if (engine.hasFile(deck))
-        text += bpm > 0.0 ? " | " + juce::String(bpm, 1) + " BPM" : " | -- BPM";
-    strips[deck].header.setText(text, juce::dontSendNotification);
+    const bool show = showBpm || engine.beatMode() == AudioEngine::BeatMode::Sync;
+    const double bpm = engine.getBpm(deck) * engine.getTempo(deck);
+    const juce::String text = engine.hasFile(deck) && show && bpm > 0.0
+        ? juce::String(bpm, 1) + " BPM" : "--.- BPM";
+    if (text != strips[deck].bpmValue.getText())
+        strips[deck].bpmValue.setText(text, juce::dontSendNotification);
 }
 
 juce::Slider* MainComponent::sliderFor(int deck, lean::MidiTarget target) {
@@ -1230,12 +1286,29 @@ void MainComponent::timerCallback() {
         chanShown[d] = std::max(DJLook::meterUnit(chPeak[d]),
                                 chanShown[d] - kMeterFall);
         chanMeters[d].setLevel(chanShown[d]);
-        strips[d].time.setText(
-            formatTime(engine.getPositionSeconds(d)) + " / "
-                + formatTime(engine.getLengthSeconds(d)),
+        const double duration = engine.getLengthSeconds(d);
+        const double elapsed = engine.getPositionSeconds(d);
+        const bool loaded = engine.hasFile(d) && duration > 0.0;
+        strips[d].time.setText(loaded ? formatTime(elapsed) : "--:--",
+                               juce::dontSendNotification);
+        strips[d].remaining.setText(
+            loaded ? "-" + formatTime(juce::jmax(0.0, duration - elapsed)) : "--:--",
             juce::dontSendNotification);
-        strips[d].play.setToggleState(engine.isPlaying(d),
+        const bool preview = engine.isPreviewing(d);
+        const bool playing = engine.isPlaying(d);
+        strips[d].play.setToggleState(playing && !preview,
                                       juce::dontSendNotification);
+        const juce::String playCaption =
+            preview ? "PREVIEW" : (playing ? "PAUSE" : "PLAY");
+        if (playCaption != strips[d].play.getButtonText())
+            strips[d].play.setButtonText(playCaption);
+        strips[d].cue.setToggleState(preview, juce::dontSendNotification);
+        const bool ready =
+            static_cast<lean::LoadState>(engine.deckState(d)) == lean::LoadState::Ready;
+        strips[d].play.setEnabled(ready);
+        strips[d].cue.setEnabled(ready);
+        strips[d].back.setEnabled(ready);
+        strips[d].fwd.setEnabled(ready);
         strips[d].sync.setToggleState(engine.isSync(d),
                                       juce::dontSendNotification);
         if (engine.isSync(d))
@@ -1246,7 +1319,7 @@ void MainComponent::timerCallback() {
         // actually changes (the colour setter early-outs the same way).
         juce::String chip = "EMPTY";
         juce::Colour chipColour = DJLook::dimInk;
-        juce::String payload;
+        juce::String payload = "LOAD A TRACK";
         juce::Colour payloadColour = DJLook::dimInk;
         switch (static_cast<lean::LoadState>(engine.deckState(d))) {
             case lean::LoadState::Empty:
@@ -1262,8 +1335,8 @@ void MainComponent::timerCallback() {
                 chipColour = DJLook::cyan;
                 break;
             case lean::LoadState::Ready:
-                chip = "READY";
-                chipColour = DJLook::accent;
+                chip = preview ? "CUE HOLD" : (playing ? "PLAYING" : "READY");
+                chipColour = preview ? DJLook::cyan : DJLook::accent;
                 payload = engine.deckName(d);
                 payloadColour = DJLook::ink;
                 break;
@@ -1277,23 +1350,16 @@ void MainComponent::timerCallback() {
         if (chip != strips[d].stateChip.getText())
             strips[d].stateChip.setText(chip, juce::dontSendNotification);
         strips[d].stateChip.setColour(juce::Label::textColourId, chipColour);
-        if (payload != strips[d].status.getText())
+        if (payload != strips[d].status.getText()) {
             strips[d].status.setText(payload, juce::dontSendNotification);
+            strips[d].status.setTooltip(payload);
+        }
         strips[d].status.setColour(juce::Label::textColourId, payloadColour);
-        // Live effective tempo: analyzed BPM follows the pitch fader, unless
-        // the user hid it in Free mode (Sync always shows it).
-        juce::String text = d == 0 ? "DECK A" : "DECK B";
-        const bool show = showBpm
-            || engine.beatMode() == AudioEngine::BeatMode::Sync;
-        if (engine.hasFile(d) && show) {
-            const double eff = engine.getBpm(d) * engine.getTempo(d);
-            text += eff > 0.0 ? " | " + juce::String(eff, 1) + " BPM"
-                              : " | -- BPM";
-        }
-        if (text != lastHeader[d]) {
-            lastHeader[d] = text;
-            strips[d].header.setText(text, juce::dontSendNotification);
-        }
+        const double percent = (engine.getTempo(d) - 1.0) * 100.0;
+        const juce::String pitch = juce::String::formatted("%+.1f%%", percent);
+        if (pitch != strips[d].pitchValue.getText())
+            strips[d].pitchValue.setText(pitch, juce::dontSendNotification);
+        updateDeckHeader(d);
     }
     reflect(xfade, engine.getXfade());
     reflect(topBar.masterKnob, engine.getMaster());
@@ -1372,35 +1438,47 @@ void MainComponent::paint(juce::Graphics& g) {
 }
 
 void MainComponent::layoutDeck(DeckStrip& s, juce::Rectangle<int> panel) {
-    auto headRow = panel.removeFromTop(36);
-    s.header.setBounds(headRow.removeFromLeft(headRow.getWidth() - 140));
-    headRow.removeFromLeft(6);
-    s.sync.setBounds(headRow.removeFromLeft(58));
-    headRow.removeFromLeft(6);
-    s.zoomOutBtn.setBounds(headRow.removeFromLeft(32));
-    headRow.removeFromLeft(6);
-    s.zoomInBtn.setBounds(headRow.removeFromLeft(32));
-    auto buttons = panel.removeFromTop(56);
-    s.open.setBounds(buttons.removeFromLeft(64).withSizeKeepingCentre(64, 40));
-    buttons.removeFromLeft(5);
-    s.play.setBounds(buttons.removeFromLeft(52).withSizeKeepingCentre(52, 40));
-    buttons.removeFromLeft(5);
-    s.cue.setBounds(buttons.removeFromLeft(52).withSizeKeepingCentre(52, 40));
-    buttons.removeFromLeft(5);
-    s.key.setBounds(buttons.removeFromLeft(52).withSizeKeepingCentre(52, 40));
-    auto statusRow = panel.removeFromTop(34);
-    s.stateChip.setBounds(
-        statusRow.removeFromLeft(86).withSizeKeepingCentre(86, 24));
-    s.status.setBounds(statusRow);
-    auto timeRow = panel.removeFromTop(50);
-    s.back.setBounds(timeRow.removeFromLeft(40).withSizeKeepingCentre(40, 30));
-    timeRow.removeFromLeft(6);
-    s.fwd.setBounds(timeRow.removeFromRight(40).withSizeKeepingCentre(40, 30));
-    timeRow.removeFromRight(6);
-    s.time.setBounds(timeRow);
-    s.tempo.setBounds(panel.removeFromTop(64));
-    // Bounded waveform band (main + overview stripe): the strip height is
-    // set by resized() so the deck column never swallows the window.
+    s.surface.setBounds(panel);
+    panel = panel.reduced(10, 7);
+
+    auto headRow = panel.removeFromTop(38);
+    s.header.setBounds(headRow.removeFromLeft(74));
+    auto zoom = headRow.removeFromRight(76);
+    s.zoomOutBtn.setBounds(zoom.removeFromLeft(34).reduced(2, 3));
+    s.zoomInBtn.setBounds(zoom.removeFromRight(34).reduced(2, 3));
+    s.sync.setBounds(headRow.removeFromRight(58).reduced(2, 5));
+    s.bpmValue.setBounds(headRow.reduced(3, 0));
+
+    // A full-width title and dedicated load/transport controls.
+    auto trackRow = panel.removeFromTop(34);
+    s.stateChip.setBounds(trackRow.removeFromRight(78));
+    s.status.setBounds(trackRow.reduced(4, 0));
+    auto transport = panel.removeFromTop(58);
+    s.open.setBounds(transport.removeFromLeft(62).reduced(2, 6));
+    transport.removeFromLeft(4);
+    s.play.setBounds(transport.removeFromLeft(92).reduced(2, 4));
+    transport.removeFromLeft(4);
+    s.cue.setBounds(transport.removeFromLeft(78).reduced(2, 4));
+    transport.removeFromLeft(4);
+    s.key.setBounds(transport.removeFromLeft(62).reduced(2, 6));
+
+    auto beatRow = panel.removeFromTop(36);
+    s.beatCaption.setBounds(beatRow.removeFromLeft(104));
+    s.back.setBounds(beatRow.removeFromLeft(65).reduced(2, 3));
+    s.fwd.setBounds(beatRow.removeFromLeft(65).reduced(2, 3));
+
+    auto clockRow = panel.removeFromTop(50);
+    auto elapsedBox = clockRow.removeFromLeft(clockRow.getWidth() / 2);
+    s.elapsedCaption.setBounds(elapsedBox.removeFromTop(17));
+    s.time.setBounds(elapsedBox);
+    s.remainingCaption.setBounds(clockRow.removeFromTop(17));
+    s.remaining.setBounds(clockRow);
+
+    auto tempoRow = panel.removeFromTop(52);
+    s.tempoReset.setBounds(tempoRow.removeFromRight(44).reduced(1, 8));
+    s.pitchValue.setBounds(tempoRow.removeFromRight(68));
+    s.tempo.setBounds(tempoRow.reduced(4, 5));
+
     if (s.wave)
         s.wave->setBounds(panel.reduced(0, 2));
 }
@@ -1415,7 +1493,7 @@ void MainComponent::resized() {
     // the deck (main + overview stripe), so the deck column keeps a fixed
     // content height and the library takes everything else. The clamp
     // guarantees the browser keeps its 220 px floor at every window size.
-    constexpr int kStripRows = 240; // header+transport+status+time+tempo
+    constexpr int kStripRows = 268; // title, transport, beat, clocks, pitch
     constexpr int kWaveCap = 190;   // main waveform + overview stripe
     const int avail = area.getHeight();
     const int cap = getLocalBounds().getHeight() >= 1200 ? 230 : kWaveCap;
