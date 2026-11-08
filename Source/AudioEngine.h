@@ -65,8 +65,8 @@ public:
     // All cue editing and mode changes are message-thread operations.
     void setLoadLock(int deck, bool enabled) { loadLocked[deck & 1] = enabled; }
     bool isLoadLocked(int deck) const { return loadLocked[deck & 1]; }
-    void setAutoCueMode(int deck, lean::AutoCueMode mode) {
-        cueModes[deck & 1] = mode;
+    void setAutoCueMode(int deck, lean::AutoCueMode cueMode) {
+        cueModes[deck & 1] = cueMode;
     }
     lean::AutoCueMode autoCueMode(int deck) const { return cueModes[deck & 1]; }
     double cueSeconds(int deck) const {
