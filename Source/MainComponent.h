@@ -37,6 +37,30 @@ public:
         strips[deck & 1].wave->setZoomIndex(idx);
     }
     void harnessShowFxPage(bool show) { showBrowser(!show); }
+    // Visual regression seam: catch clipped/overlapping deck transport at
+    // each supported viewport before recording screenshots.
+    bool harnessDeckLayoutValid() const {
+        for (const auto& s : strips) {
+            const auto bounds = s.surface.getBounds();
+            const auto inside = [&bounds](const juce::Component& component) {
+                return component.getWidth() > 0 && component.getHeight() > 0
+                       && bounds.contains(component.getBounds());
+            };
+            if (!inside(s.play) || !inside(s.cue) || !inside(s.status)
+                || !inside(s.bpmValue) || !inside(s.time)
+                || !inside(s.remaining) || !inside(s.tempo)
+                || !inside(s.tempoReset) || !inside(*s.wave)
+                || s.play.getBounds().intersects(s.cue.getBounds()))
+                return false;
+        }
+        return true;
+    }
+    juce::String harnessPitchText(int deck) const {
+        return strips[deck & 1].pitchValue.getText();
+    }
+    juce::String harnessRemainingText(int deck) const {
+        return strips[deck & 1].remaining.getText();
+    }
     // G4: seed the meters to known dB-mapped levels so CI snapshots can see
     // the fill and peak-hold marker without an audio device.
     void harnessSetMeters(float master, float chA, float chB) {
@@ -159,14 +183,17 @@ private:
     };
 
     struct DeckStrip {
-        juce::TextButton open{ "Open" };
+        // Dedicated deck surface, independent of the centre mixer.
+        GlassPanel surface;
+        juce::TextButton open{ "LOAD" };
         juce::TextButton play{ "Play" };
         juce::TextButton cue{ "CUE" };
         juce::TextButton pfl{ "PFL" };
         juce::TextButton key{ "Key" };
         juce::TextButton sync{ "SYNC" };
         juce::TextButton back{ "<" };
-        juce::TextButton fwd{ ">" };
+        juce::TextButton fwd{ "+4" };
+        juce::TextButton tempoReset{ "0%" };
         juce::Slider tempo{ juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
         juce::Slider gain{ juce::Slider::RotaryHorizontalVerticalDrag,
                            juce::Slider::TextBoxBelow };
@@ -178,6 +205,12 @@ private:
                            juce::Slider::TextBoxBelow };
         juce::Slider fader{ juce::Slider::LinearVertical, juce::Slider::NoTextBox };
         juce::Label header;
+        juce::Label bpmValue;
+        juce::Label pitchValue;
+        juce::Label beatCaption;
+        juce::Label elapsedCaption;
+        juce::Label remainingCaption;
+        juce::Label remaining;
         juce::TextButton zoomInBtn{ "+" };
         juce::TextButton zoomOutBtn{ "-" };
         juce::Label knobCaps[4];

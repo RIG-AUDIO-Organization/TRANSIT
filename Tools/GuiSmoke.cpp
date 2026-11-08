@@ -402,6 +402,10 @@ int main(int argc, char** argv) {
     // Pass 1: empty state (before any file is loaded).
     for (const Viewport& vp : kViewports) {
         window.useViewport(vp.w, vp.h);
+        if (!content.harnessDeckLayoutValid()) {
+            fail("deck controls outside panel or transport keys overlap");
+            return 1;
+        }
         snapshot(content, outDir, "empty", vp.w, vp.h);
     }
 
@@ -420,6 +424,12 @@ int main(int argc, char** argv) {
     content.harnessLoadFile(1, toneB.getFullPathName());
     if (!waitReady(content, 0) || !waitReady(content, 1))
         return 1;
+    pump(100);
+    if (content.harnessPitchText(0) != "+0.0%"
+        || !content.harnessRemainingText(0).startsWith("-")) {
+        fail("deck pitch/remaining readouts not initialized after load");
+        return 1;
+    }
 
     // Pass 2: deterministic state set per viewport.
     for (const Viewport& vp : kViewports) {

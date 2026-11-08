@@ -123,8 +123,19 @@ void DJLook::drawLinearSlider(juce::Graphics& g, int x, int y, int width, int he
         g.drawRoundedRectangle((float)x, (float)cy - 3.0f, (float)width, 6.0f, 3.0f,
                                1.0f);
         g.setColour(accent);
-        g.fillRoundedRectangle((float)x, (float)cy - 2.0f, sliderPos - (float)x, 4.0f,
-                               2.0f);
+        if (slider.getProperties().contains("pitch")) {
+            // DJ pitch fader: centre is 0%, fill indicates signed change.
+            const float mid = (float)x + (float)width * 0.5f;
+            const float begin = juce::jmin(mid, sliderPos);
+            const float extent = std::abs(sliderPos - mid);
+            if (extent > 0.0f)
+                g.fillRoundedRectangle(begin, (float)cy - 2.0f, extent, 4.0f, 2.0f);
+            g.setColour(ink.withAlpha(0.50f));
+            g.fillRect(mid - 0.5f, (float)cy - 8.0f, 1.0f, 16.0f);
+        } else {
+            g.fillRoundedRectangle((float)x, (float)cy - 2.0f,
+                                   sliderPos - (float)x, 4.0f, 2.0f);
+        }
         // Round cap, dark with a lit rim and amber centre.
         g.setColour(panel.brighter(0.18f));
         g.fillEllipse(sliderPos - 7.0f, (float)cy - 7.0f, 14.0f, 14.0f);
@@ -235,6 +246,17 @@ void DJLook::drawButtonBackground(juce::Graphics& g, juce::Button& button,
             g.setColour(panel.brighter(0.3f));
             g.fillRoundedRectangle(area, 4.0f);
         }
+        return;
+    }
+    // Larger transport keys: clearly indicate live play and cue preview.
+    if (props.contains("deckPlay") || props.contains("deckCue")) {
+        const bool on = button.getToggleState();
+        const auto lit = props.contains("deckB") ? cyan : accent;
+        const auto area = button.getLocalBounds().toFloat().reduced(1.0f);
+        g.setColour(on ? lit : (down ? panel.brighter(0.24f) : deep));
+        g.fillRoundedRectangle(area, 5.0f);
+        g.setColour((on ? lit : ink).withAlpha(on ? 0.95f : 0.28f));
+        g.drawRoundedRectangle(area.reduced(0.5f), 5.0f, 1.5f);
         return;
     }
     // Chunky hardware keys, Xone-style: near-black at rest with a dim amber

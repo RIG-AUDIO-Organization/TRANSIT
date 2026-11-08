@@ -1,0 +1,114 @@
+# TRANSIT — DJ Software / SPDX-License-Identifier: GPL-3.0-only
+# Build downloadable, unsigned developer previews; never publish a release.
+name: TRANSIT preview packages
+
+on:
+  push:
+    branches:
+      - 'feat/deck-interface-preview-*'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Source/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/preview-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: transit-preview-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-x64:
+    name: Linux x86-64 preview
+    runs-on: ubuntu-22.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install JUCE/Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ \
+            libasound2-dev libjack-jackd2-dev \
+            libfreetype6-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev \
+            libgl1-mesa-dev libgtk-3-dev
+
+      - name: Configure Release
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build TRANSIT executable
+        run: cmake --build build --target TRANSIT --parallel 2
+
+      - name: Package Linux test app
+        shell: bash
+        run: |
+          set -euo pipefail
+          exe="build/TRANSIT_artefacts/Release/TRANSIT"
+          test -f "$exe"
+          mkdir -p package dist
+          cp "$exe" package/TRANSIT
+          chmod +x package/TRANSIT
+          printf '%s\n' \
+            'TRANSIT: UNSIGNED DEVELOPER PREVIEW (Linux x86-64)' \
+            'Not a supported release. Not suitable for live performance.' \
+            'Requires a Linux desktop (X11) and distro libraries: ALSA, JACK,' \
+            'FreeType, Fontconfig, X11, OpenGL and GTK 3.' \
+            'On Ubuntu/Debian, install corresponding runtime packages first.' \
+            'Run: chmod +x TRANSIT && ./TRANSIT' \
+            'This tarball is not an AppImage or fully static package.' \
+            > package/README-TESTING.txt
+          tar -czf dist/TRANSIT-preview-linux-x86_64.tar.gz -C package .
+          ls -lh dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TRANSIT-preview-Linux-x86_64
+          path: dist/TRANSIT-preview-linux-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  windows-x64:
+    name: Windows x64 preview
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure Release (MSVC)
+        shell: pwsh
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build TRANSIT executable
+        shell: pwsh
+        run: cmake --build build --config Release --target TRANSIT --parallel 2
+
+      - name: Package Windows test app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = "build/TRANSIT_artefacts/Release/TRANSIT.exe"
+          if (-not (Test-Path $exe)) { throw "TRANSIT.exe not found at $exe" }
+          New-Item -ItemType Directory -Force package, dist | Out-Null
+          Copy-Item $exe package/TRANSIT.exe
+          @(
+            "TRANSIT: UNSIGNED DEVELOPER PREVIEW (Windows x64)"
+            "Not a supported release. Not suitable for live performance."
+            "Unzip and run TRANSIT.exe."
+            "Windows SmartScreen may warn about unsigned development binaries."
+            "No VST3 plug-ins, music files or ASIO drivers are bundled."
+          ) | Set-Content -Path package/README-TESTING.txt
+          Compress-Archive -Path package/* -DestinationPath dist/TRANSIT-preview-windows-x64.zip -Force
+          Get-ChildItem dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TRANSIT-preview-Windows-x64
+          path: dist/TRANSIT-preview-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 30
