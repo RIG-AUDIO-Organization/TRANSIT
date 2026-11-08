@@ -152,7 +152,7 @@ jobs:
       - name: Build headless test targets
         run: >
           cmake --build build-asan --parallel --
-          NullRender DecodeTest MixerTest KeylockTest WaveformTest
+          NullRender AutoCueTest DecodeTest MixerTest KeylockTest WaveformTest
           MidiQueueTest LoadScheduleTest DeckLoadTest FxScanTest
           LibraryTest MidiMapTest RecorderTest AnalyzeTest SyncTest
           UiStateTest

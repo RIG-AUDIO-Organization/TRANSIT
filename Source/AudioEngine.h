@@ -20,6 +20,7 @@
 #include "LoadSchedule.h"
 #include "Recorder.h"
 #include "Analyze.h"
+#include "AutoCue.h"
 #include "MidiMap.h"
 #include "MidiQueue.h"
 #include "Flx4Map.h"
@@ -48,7 +49,9 @@ public:
     // deckState(); a completed load invokes onDeckReady on the message
     // thread; a failure lands in deckError() with state Error (the deck
     // keeps its previous track).
-    void loadFile(int deck, const juce::String& path);
+    // Returns false rather than replacing a playing deck when load lock is on.
+    // A second check at async commit closes the load-versus-Play race.
+    bool loadFile(int deck, const juce::String& path);
     int deckState(int deck) const {
         return states[deck & 1].load(std::memory_order_seq_cst);
     }
@@ -58,6 +61,21 @@ public:
     std::function<void(int)> onDeckReady;
 
     bool hasFile(int deck) const { return fileLoaded[deck & 1]; }
+
+    // All cue editing and mode changes are message-thread operations.
+    void setLoadLock(int deck, bool enabled) { loadLocked[deck & 1] = enabled; }
+    bool isLoadLocked(int deck) const { return loadLocked[deck & 1]; }
+    void setAutoCueMode(int deck, lean::AutoCueMode cueMode) {
+        cueModes[deck & 1] = cueMode;
+    }
+    lean::AutoCueMode autoCueMode(int deck) const { return cueModes[deck & 1]; }
+    double cueSeconds(int deck) const {
+        return fileLoaded[deck & 1]
+            ? mixer.channel(deck & 1).deck.getCuePointSeconds() : 0.0;
+    }
+    bool cueIsManual(int deck) const { return manualCue[deck & 1]; }
+    bool setCueAtPlayhead(int deck);
+    bool resetCueToAuto(int deck);
 
     void setTempo(int deck, double t) { mixer.channel(deck & 1).deck.setTempo(t); }
     double getTempo(int deck) const {
@@ -172,8 +190,10 @@ public:
         if (len <= 0.0)
             return;
         d.setPositionSeconds(std::clamp(fraction, 0.0, 1.0) * len);
+        // Seeking while paused edits the cue, preserving existing CDJ
+        // semantics, and persists that manual selection across sessions.
         if (!d.isPlaying())
-            d.setCuePointSeconds(std::clamp(fraction, 0.0, 1.0) * len);
+            (void)setCueAtPlayhead(deck);
     }
     const lean::Waveform& getWaveform(int deck) const { return waves[deck & 1]; }
 
@@ -356,6 +376,7 @@ private:
         uint64_t token = 0;
         std::string path;
         std::string fileName;
+        lean::AutoCueMode cueMode = lean::AutoCueMode::SmartOnset;
     };
     struct LoadResult {
         uint64_t token = 0;
@@ -366,6 +387,11 @@ private:
         std::vector<float> stereo;
         double rate = 44100.0;
         double bpm = 0.0;
+        double selectedCueSeconds = 0.0;
+        double detectedCueSeconds = 0.0;
+        bool selectedManual = false;
+        bool detectedCue = false;
+        std::string path;
         lean::Waveform wave;
     };
 
@@ -405,6 +431,13 @@ private:
     bool fxResultReady = false;     // guarded by resultMutex
     bool dbReady = false;
     bool fileLoaded[2] = { false, false };
+    bool loadLocked[2] = { true, true };
+    bool manualCue[2] = { false, false };
+    bool autoCueDetected[2] = { false, false };
+    double autoCueSeconds[2] = { 0.0, 0.0 };
+    lean::AutoCueMode cueModes[2] = { lean::AutoCueMode::SmartOnset,
+                                      lean::AutoCueMode::SmartOnset };
+    std::string loadedPaths[2]; // message-thread only
     bool fourOuts = false;
     bool keylockEcoState = false;
     bool pfl[2] = { false, false };

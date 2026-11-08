@@ -73,6 +73,15 @@ void MainComponent::WaveformView::paint(juce::Graphics& g) {
             g.setColour(played ? tint.withAlpha(0.35f) : tint);
             g.fillRect(x, juce::jmin(yTop, yBot), 1, juce::jmax(1, yBot - yTop));
         }
+        const double cue = engine.cueSeconds(deck);
+        if (engine.hasFile(deck) && cue >= start && cue <= start + span) {
+            const int xCue = juce::jlimit(0, W - 2,
+                                         (int)((cue - start) / span * (double)W));
+            g.setColour(DJLook::cyan.withAlpha(0.70f));
+            g.fillRect(xCue, 0, 1, mainH);
+            g.drawText("CUE", juce::Rectangle<int>(xCue + 3, 2, 38, 14),
+                       juce::Justification::centredLeft);
+        }
         const double posX = (pos - start) / span * (double)W;
         g.setColour(DJLook::accent);
         g.fillRect(juce::jlimit(0, W - 2, (int)posX), 0, 2, mainH);
@@ -125,6 +134,12 @@ void MainComponent::WaveformView::paintOverview(juce::Graphics& g, int W,
             g.setColour(played ? tint.withAlpha(0.45f)
                                : tint.withAlpha(0.75f));
             g.fillRect(x, juce::jmin(yTop, yBot), 1, juce::jmax(1, yBot - yTop));
+        }
+        if (engine.hasFile(deck)) {
+            const int cx = juce::jlimit(
+                0, W - 1, (int)(engine.cueSeconds(deck) / len * (double)W));
+            g.setColour(DJLook::cyan);
+            g.fillRect(cx, mainH, 1, stripeH);
         }
         const int px = juce::jlimit(0, W - 1, (int)(pos / len * (double)W));
         g.setColour(DJLook::accent);
@@ -268,6 +283,11 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
         for (auto* c : readouts)
             addAndMakeVisible(c);
         addAndMakeVisible(s.header);
+        addAndMakeVisible(s.setCue);
+        addAndMakeVisible(s.resetCue);
+        addAndMakeVisible(s.loadLock);
+        addAndMakeVisible(s.autoCueMode);
+        addAndMakeVisible(s.cueReadout);
         addAndMakeVisible(s.zoomInBtn);
         addAndMakeVisible(s.zoomOutBtn);
         addAndMakeVisible(s.sync);
@@ -378,6 +398,52 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
         s.key.setTooltip("Keep musical pitch constant as tempo changes");
         s.tempoReset.setTooltip("Reset tempo to original speed");
         s.tempoReset.onClick = [this, d] { strips[d].tempo.setValue(1.0); };
+        s.autoCueMode.addItem("AUTO OFF", 1);
+        s.autoCueMode.addItem("FIRST AUDIO", 2);
+        s.autoCueMode.addItem("SMART ONSET", 3);
+        s.autoCueMode.setSelectedId(3, juce::dontSendNotification);
+        s.autoCueMode.setTooltip("Auto cue algorithm; reload a paused deck to apply");
+        s.autoCueMode.onChange = [this, d] {
+            const auto mode = static_cast<lean::AutoCueMode>(
+                juce::jlimit(0, 2, strips[d].autoCueMode.getSelectedId() - 1));
+            engine.setAutoCueMode(d, mode);
+            saveSettings();
+            if (engine.hasFile(d) && !engine.isPlaying(d)
+                && deckPath[d].isNotEmpty()) {
+                const juce::String pathToReload = deckPath[d];
+                requestLoad(d, pathToReload);
+            } else if (engine.isPlaying(d)) {
+                sysStatus.setText("Auto Cue mode applies to next track load",
+                                  juce::dontSendNotification);
+            }
+        };
+        s.loadLock.setClickingTogglesState(true);
+        s.loadLock.setToggleState(true, juce::dontSendNotification);
+        s.loadLock.setTooltip("Prevent replacing a deck while it is playing");
+        s.loadLock.onClick = [this, d] {
+            engine.setLoadLock(d, strips[d].loadLock.getToggleState());
+            saveSettings();
+        };
+        s.setCue.setTooltip("Save current playhead as a manual cue point");
+        s.setCue.onClick = [this, d] {
+            if (engine.setCueAtPlayhead(d)) {
+                sysStatus.setText("Saved manual CUE on deck " + juce::String(d == 0 ? "A" : "B"),
+                                  juce::dontSendNotification);
+                strips[d].wave->repaint();
+            }
+        };
+        s.resetCue.setTooltip("Clear manual cue and restore detected auto cue");
+        s.resetCue.onClick = [this, d] {
+            if (engine.resetCueToAuto(d)) {
+                sysStatus.setText("Restored automatic CUE", juce::dontSendNotification);
+                strips[d].wave->repaint();
+            }
+        };
+        s.cueReadout.setText("CUE --:--", juce::dontSendNotification);
+        s.cueReadout.setColour(juce::Label::textColourId, DJLook::dimInk);
+        s.cueReadout.setFont(
+            juce::Font(juce::FontOptions{}.withHeight(11.0f)).boldened());
+        s.cueReadout.setJustificationType(juce::Justification::centredRight);
 
         s.tempo.setRange(0.5, 1.5, 0.001);
         s.tempo.setValue(1.0);
@@ -967,7 +1033,19 @@ void MainComponent::loadSettings() {
                 showBpm = ln.substring(8).trim() != "0";
             else if (ln.startsWith("keyEco="))
                 eco = ln.substring(7).trim() != "0";
-            else if (ln.startsWith("aux"))
+            else if (ln.startsWith("autoCue0=") || ln.startsWith("autoCue1=")) {
+                const int d = ln[7] == '0' ? 0 : 1;
+                const int m = juce::jlimit(0, 2, ln.fromFirstOccurrenceOf(
+                    "=", false, false).getIntValue());
+                engine.setAutoCueMode(d, static_cast<lean::AutoCueMode>(m));
+                strips[d].autoCueMode.setSelectedId(m + 1, juce::dontSendNotification);
+            } else if (ln.startsWith("loadLock0=") || ln.startsWith("loadLock1=")) {
+                const int d = ln[8] == '0' ? 0 : 1;
+                const bool enabled = ln.fromFirstOccurrenceOf(
+                    "=", false, false).trim() != "0";
+                engine.setLoadLock(d, enabled);
+                strips[d].loadLock.setToggleState(enabled, juce::dontSendNotification);
+            } else if (ln.startsWith("aux"))
                 auxPaths.add(ln.fromFirstOccurrenceOf("=", false, false).trim());
         }
     }
@@ -1007,6 +1085,12 @@ void MainComponent::saveSettings() {
         + "\n";
     text += juce::String("showBpm=") + (showBpm ? "1" : "0") + "\n";
     text += juce::String("keyEco=") + (engine.keylockEco() ? "1" : "0") + "\n";
+    for (int d = 0; d < 2; ++d) {
+        text += "autoCue" + juce::String(d) + "="
+            + juce::String((int)engine.autoCueMode(d)) + "\n";
+        text += "loadLock" + juce::String(d) + "="
+            + (engine.isLoadLocked(d) ? "1" : "0") + "\n";
+    }
     for (int a = 0; a < 4; ++a)
         text += "aux" + juce::String(a) + "=" + engine.auxPath(a) + "\n";
     // W8/W9: cross-session UI state — live zoom per deck, live browser
@@ -1174,6 +1258,11 @@ void MainComponent::loadBrowserRow(int row) {
 }
 
 void MainComponent::requestLoad(int deck, const juce::String& path) {
+    if (engine.isLoadLocked(deck) && engine.isPlaying(deck)) {
+        sysStatus.setText("Deck is playing: LOAD LOCK prevents replacement",
+                          juce::dontSendNotification);
+        return;
+    }
     deckPath[deck & 1] = {};
     // Applying a stored zoom must not be mistaken for a user zoom change
     // (it would re-record the entry it just read).
@@ -1182,7 +1271,11 @@ void MainComponent::requestLoad(int deck, const juce::String& path) {
         strips[deck & 1].wave->setZoomIndex(*z);
     suppressZoomSave = false;
     deckPath[deck & 1] = path;
-    engine.loadFile(deck, path);
+    if (!engine.loadFile(deck, path)) {
+        sysStatus.setText("Deck " + juce::String((deck & 1) == 0 ? "A" : "B")
+                              + " is playing: LOAD LOCK prevents replacement",
+                          juce::dontSendNotification);
+    }
 }
 
 void MainComponent::rememberFileZoom(int deck) {
@@ -1309,6 +1402,13 @@ void MainComponent::timerCallback() {
         strips[d].cue.setEnabled(ready);
         strips[d].back.setEnabled(ready);
         strips[d].fwd.setEnabled(ready);
+        strips[d].setCue.setEnabled(ready && !preview);
+        strips[d].resetCue.setEnabled(ready && !playing);
+        strips[d].cueReadout.setText(
+            ready ? "CUE " + formatTime(engine.cueSeconds(d))
+                    + (engine.cueIsManual(d) ? " MANUAL" : " AUTO")
+                  : "CUE --:--",
+            juce::dontSendNotification);
         strips[d].sync.setToggleState(engine.isSync(d),
                                       juce::dontSendNotification);
         if (engine.isSync(d))
@@ -1463,9 +1563,16 @@ void MainComponent::layoutDeck(DeckStrip& s, juce::Rectangle<int> panel) {
     s.key.setBounds(transport.removeFromLeft(62).reduced(2, 6));
 
     auto beatRow = panel.removeFromTop(36);
-    s.beatCaption.setBounds(beatRow.removeFromLeft(104));
-    s.back.setBounds(beatRow.removeFromLeft(65).reduced(2, 3));
-    s.fwd.setBounds(beatRow.removeFromLeft(65).reduced(2, 3));
+    s.beatCaption.setBounds(beatRow.removeFromLeft(86));
+    s.back.setBounds(beatRow.removeFromLeft(50).reduced(2, 3));
+    s.fwd.setBounds(beatRow.removeFromLeft(50).reduced(2, 3));
+    s.cueReadout.setBounds(beatRow.reduced(2, 0));
+
+    auto smartRow = panel.removeFromTop(32);
+    s.autoCueMode.setBounds(smartRow.removeFromLeft(116).reduced(2, 2));
+    s.setCue.setBounds(smartRow.removeFromLeft(73).reduced(2, 2));
+    s.resetCue.setBounds(smartRow.removeFromLeft(56).reduced(2, 2));
+    s.loadLock.setBounds(smartRow.reduced(2, 2));
 
     auto clockRow = panel.removeFromTop(50);
     auto elapsedBox = clockRow.removeFromLeft(clockRow.getWidth() / 2);
@@ -1493,7 +1600,7 @@ void MainComponent::resized() {
     // the deck (main + overview stripe), so the deck column keeps a fixed
     // content height and the library takes everything else. The clamp
     // guarantees the browser keeps its 220 px floor at every window size.
-    constexpr int kStripRows = 268; // title, transport, beat, clocks, pitch
+    constexpr int kStripRows = 300; // title, transport, beat, auto cue, clocks, pitch
     constexpr int kWaveCap = 190;   // main waveform + overview stripe
     const int avail = area.getHeight();
     const int cap = getLocalBounds().getHeight() >= 1200 ? 230 : kWaveCap;
