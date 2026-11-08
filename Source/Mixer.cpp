@@ -167,6 +167,8 @@ void Mixer::render(float* left, float* right, float* phonesL, float* phonesR,
     std::fill(left, left + numSamples, 0.0f);
     std::fill(right, right + numSamples, 0.0f);
     stripPeak[0] = stripPeak[1] = 0.0f; // per-block peaks for channel meters
+    for (auto& peak : auxPeak)
+        peak.store(0.0f, std::memory_order_seq_cst);
     if (auxHost)
         auxHost->blockBoundary(); // once per block, even when all sends are silent
     const bool doPhones = phonesL && phonesR;
@@ -245,13 +247,26 @@ void Mixer::render(float* left, float* right, float* phonesL, float* phonesR,
                 if (peak <= 0.0f)
                     continue;
                 auxHost->processAux(a, auxL[a], auxR[a], m);
-                const float ret = auxReturn[a].next(coeff);
-                if (ret <= 0.0f) // gains never go negative: same as == 0
-                    continue;
+                const bool cueReturn = doPhones
+                    && auxCue[a].load(std::memory_order_seq_cst);
+                float processedPeak = 0.0f;
                 for (int i = 0; i < m; ++i) {
-                    left[done + i] += auxL[a][i] * ret;
-                    right[done + i] += auxR[a][i] * ret;
+                    // A broken plugin must not poison the master or phones.
+                    const float l = std::isfinite(auxL[a][i]) ? auxL[a][i] : 0.0f;
+                    const float r = std::isfinite(auxR[a][i]) ? auxR[a][i] : 0.0f;
+                    processedPeak = std::max(processedPeak,
+                                             std::max(std::abs(l), std::abs(r)));
+                    if (cueReturn) {
+                        cueL[i] += l;
+                        cueR[i] += r;
+                    }
+                    // Sample-accurate return fader smoothing. Do not skip
+                    // advancing it while muted, or the next unmute jumps.
+                    const float ret = auxReturn[a].next(coeff);
+                    left[done + i] += l * ret;
+                    right[done + i] += r * ret;
                 }
+                auxPeak[a].store(processedPeak, std::memory_order_seq_cst);
             }
         }
         if (doPhones) {

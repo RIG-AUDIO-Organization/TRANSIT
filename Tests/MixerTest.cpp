@@ -297,6 +297,36 @@ int runAux() {
         check(finite, "non-finite aux output suppressed");
     }
 
+    // Independent return channel control and pre-fader PFL. The
+    // processed return is audible in headphones even with its fader at 0.
+    {
+        StubAux host;
+        host.gain = 1.0f;
+        lean::Mixer m;
+        m.setOutputRate(kRate);
+        m.setAuxHost(&host);
+        m.channel(0).deck.load(srcA, kRate);
+        m.channel(0).deck.play(true);
+        m.setCrossfader(1.0f); // deck A out of main mix
+        m.setSend(0, 2, 1.0f);  // FX 3 -> mixer channel 5
+        m.setAuxReturn(2, 0.0f);
+        m.setAuxCue(2, true);
+        m.setCueBlend(1.0f);
+        m.snap();
+        float L[512] = {}, R[512] = {}, PL[512] = {}, PR[512] = {};
+        m.render(L, R, PL, PR, 512);
+        float peakMaster = 0.0f, peakPfl = 0.0f;
+        for (int i = 0; i < 512; ++i) {
+            peakMaster = std::max(peakMaster, std::abs(L[i]));
+            peakPfl = std::max(peakPfl, std::abs(PL[i]));
+        }
+        check(peakMaster < 1.0e-5f, "FX return fader can fully mute main");
+        check(peakPfl > 0.2f, "FX return PFL is pre-fader");
+        check(m.auxChannelPeak(2) > 0.2f, "FX return meter reports signal");
+        m.setAuxCue(2, false);
+        check(!m.auxCueEnabled(2), "return PFL toggles off");
+    }
+
     if (failures == 0)
         std::printf("AUX_TEST PASS\n");
     else

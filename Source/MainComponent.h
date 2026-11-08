@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "AudioEngine.h"
+#include "ChannelMode.h"
 #include "DJLook.h"
 #include "MidiMap.h"
 #include "TopBar.h"
@@ -68,6 +69,27 @@ public:
     }
     juce::String harnessRemainingText(int deck) const {
         return strips[deck & 1].remaining.getText();
+    }
+    int harnessChannelCount() const { return (int)channelMode; }
+    void harnessSetChannelCount(int channels) {
+        setChannelMode(lean::channelModeFromCount(channels));
+    }
+    bool harnessReturnLayoutValid() const {
+        const int visible = lean::returnChannelCount(channelMode);
+        for (int a = 0; a < 4; ++a) {
+            const auto& c = returnChannels[a];
+            if (c.surface.isVisible() != (a < visible))
+                return false;
+            if (a < visible) {
+                const auto bounds = c.surface.getBounds();
+                if (bounds.getWidth() < 100 || bounds.getHeight() < 60
+                    || !bounds.contains(c.fader.getBounds())
+                    || !bounds.contains(c.pfl.getBounds())
+                    || !bounds.contains(c.title.getBounds()))
+                    return false;
+            }
+        }
+        return true;
     }
     // G4: seed the meters to known dB-mapped levels so CI snapshots can see
     // the fill and peak-hold marker without an audio device.
@@ -280,6 +302,7 @@ private:
     // library index (no full decode, no index write).
     juce::String probeDuration(const juce::File& file);
     void layoutDeck(DeckStrip& s, juce::Rectangle<int> panel);
+    void setChannelMode(lean::ChannelMode nextMode);
     void applyEq(int deck);
     void updateDeckHeader(int deck);
     void loadMidiMap();
@@ -331,6 +354,8 @@ private:
     GlassPanel mixerGlass;
     juce::Label mixerCaps[3];
     juce::Label mixerHeader;
+    juce::ComboBox channelModeSelector;
+    lean::ChannelMode channelMode = lean::ChannelMode::Two;
     juce::Label chanCaps[2];
     ChannelMeter chanMeters[2];
     float chanShown[2] = { 0.0f, 0.0f }; // G4: dB-mapped unit (0..1)
@@ -351,6 +376,19 @@ private:
         juce::Label capR{ {}, "RET" };
     };
     AuxStrip auxStrips[4];
+    // CH 3..6 are live FX return buses, not additional deck transports.
+    // Their controls remain independent even while hidden in 2CH mode.
+    struct ReturnChannel {
+        GlassPanel surface;
+        juce::Label title;
+        juce::Label source;
+        juce::Slider fader{ juce::Slider::LinearHorizontal,
+                            juce::Slider::NoTextBox };
+        juce::TextButton pfl{ "PFL" };
+        ChannelMeter meter;
+    };
+    ReturnChannel returnChannels[4];
+    float returnShown[4] = {};
     juce::Component fxPage;
     uint64_t learnSeen = 0;
     // FLX4 factory-map state (message thread only).

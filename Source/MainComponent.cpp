@@ -697,6 +697,51 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
     addAndMakeVisible(mixerGlass);
     mixerGlass.toBack();
     addAndMakeVisible(mixerHeader);
+    addAndMakeVisible(channelModeSelector);
+    channelModeSelector.addItem("2 CH", 2);
+    channelModeSelector.addItem("4 CH", 4);
+    channelModeSelector.addItem("6 CH", 6);
+    channelModeSelector.setSelectedId(2, juce::dontSendNotification);
+    channelModeSelector.setTooltip("Mixer channels: 2 decks + up to 4 stereo FX returns");
+    channelModeSelector.onChange = [this] {
+        setChannelMode(lean::channelModeFromCount(
+            channelModeSelector.getSelectedId()));
+        saveSettings();
+    };
+    for (int a = 0; a < 4; ++a) {
+        auto& ret = returnChannels[a];
+        addAndMakeVisible(ret.surface);
+        ret.surface.setInterceptsMouseClicks(false, false);
+        ret.surface.toBack();
+        addAndMakeVisible(ret.title);
+        addAndMakeVisible(ret.source);
+        addAndMakeVisible(ret.fader);
+        addAndMakeVisible(ret.pfl);
+        addAndMakeVisible(ret.meter);
+        ret.title.setText("CH " + juce::String(a + 3) + "  /  FX "
+                              + juce::String(a + 1), juce::dontSendNotification);
+        ret.title.setColour(juce::Label::textColourId, DJLook::accent);
+        ret.title.setFont(juce::Font(juce::FontOptions{}.withHeight(13.0f)).boldened());
+        ret.source.setColour(juce::Label::textColourId, DJLook::dimInk);
+        ret.source.setText("NO PLUGIN", juce::dontSendNotification);
+        ret.fader.setRange(0.0, 1.25, 0.001);
+        ret.fader.setValue(1.0, juce::dontSendNotification);
+        ret.fader.setTooltip("Independent stereo FX return gain");
+        ret.fader.onValueChange = [this, a] {
+            engine.setAuxReturn(a, (float)returnChannels[a].fader.getValue());
+        };
+        ret.pfl.setClickingTogglesState(true);
+        ret.pfl.setTooltip("Pre-fader listen to the processed FX return (4 outputs required)");
+        ret.pfl.onClick = [this, a] {
+            engine.setAuxPfl(a, returnChannels[a].pfl.getToggleState());
+        };
+        ret.surface.setVisible(false);
+        ret.title.setVisible(false);
+        ret.source.setVisible(false);
+        ret.fader.setVisible(false);
+        ret.pfl.setVisible(false);
+        ret.meter.setVisible(false);
+    }
     mixerHeader.setText("MIXER", juce::dontSendNotification);
     mixerHeader.setJustificationType(juce::Justification::centred);
     mixerHeader.setFont(juce::Font(juce::FontOptions{}.withHeight(15.0f)).boldened());
@@ -1075,6 +1120,9 @@ void MainComponent::loadSettings() {
                 sync = ln.substring(5).trim() == "sync";
             else if (ln.startsWith("showBpm="))
                 showBpm = ln.substring(8).trim() != "0";
+            else if (ln.startsWith("mixerChannels="))
+                setChannelMode(lean::channelModeFromCount(
+                    ln.substring(14).trim().getIntValue()));
             else if (ln.startsWith("keyEco="))
                 eco = ln.substring(7).trim() != "0";
             else if (ln.startsWith("autoCue0=") || ln.startsWith("autoCue1=")) {
@@ -1128,6 +1176,7 @@ void MainComponent::saveSettings() {
         + (engine.beatMode() == AudioEngine::BeatMode::Sync ? "sync" : "free")
         + "\n";
     text += juce::String("showBpm=") + (showBpm ? "1" : "0") + "\n";
+    text += "mixerChannels=" + juce::String((int)channelMode) + "\n";
     text += juce::String("keyEco=") + (engine.keylockEco() ? "1" : "0") + "\n";
     for (int d = 0; d < 2; ++d) {
         text += "autoCue" + juce::String(d) + "="
@@ -1149,6 +1198,31 @@ void MainComponent::saveSettings() {
     const auto f = settingsFile();
     f.getParentDirectory().createDirectory();
     f.replaceWithText(text);
+}
+
+void MainComponent::setChannelMode(lean::ChannelMode nextMode) {
+    channelMode = nextMode;
+    channelModeSelector.setSelectedId((int)channelMode, juce::dontSendNotification);
+    const int count = lean::returnChannelCount(channelMode);
+    for (int a = 0; a < 4; ++a) {
+        if (a >= count) {
+            engine.setAuxPfl(a, false); // no hidden PFL feeds in 2/4CH modes
+            returnChannels[a].pfl.setToggleState(
+                false, juce::dontSendNotification);
+        }
+        auto& c = returnChannels[a];
+        const bool visible = a < count;
+        c.surface.setVisible(visible);
+        c.title.setVisible(visible);
+        c.source.setVisible(visible);
+        c.fader.setVisible(visible);
+        c.pfl.setVisible(visible);
+        c.meter.setVisible(visible);
+    }
+    // Settings may restore the mode before the main window is sized.
+    // Avoid a transient zero-size layout during component construction.
+    if (getWidth() >= 900 && getHeight() >= 700)
+        resized();
 }
 
 void MainComponent::showBrowser(bool show) {
@@ -1446,6 +1520,24 @@ void MainComponent::timerCallback() {
         }
     }
     engine.updateSync();
+    // FX page return dials and mixer return faders share the same engine
+    // parameter. Reflect external changes (MIDI/FX) without feedback loops.
+    for (int a = 0; a < 4; ++a) {
+        const double target = engine.getAuxReturn(a);
+        reflect(returnChannels[a].fader, target);
+        reflect(auxStrips[a].ret, target);
+        const float peak = DJLook::meterUnit(engine.auxChannelPeak(a));
+        returnShown[a] = std::max(peak, returnShown[a] - kMeterFall);
+        returnChannels[a].meter.setLevel(returnShown[a]);
+        const juce::String name = engine.auxName(a);
+        const juce::String caption = name.isEmpty() ? "NO PLUGIN" : name;
+        if (caption != returnChannels[a].source.getText()) {
+            returnChannels[a].source.setText(caption, juce::dontSendNotification);
+            returnChannels[a].source.setTooltip(caption);
+        }
+        returnChannels[a].pfl.setToggleState(
+            engine.isAuxPfl(a), juce::dontSendNotification);
+    }
     for (int d = 0; d < 2; ++d) {
         // Reflect audio-side control state (MIDI moves, sync chase).
         reflect(strips[d].tempo, engine.getTempo(d));
@@ -1676,18 +1768,48 @@ void MainComponent::resized() {
     topBar.setBounds(full.removeFromTop(64));
     auto area = full.reduced(12);
     area.removeFromBottom(34); // meter
-    // Proportioned deck band: the waveform strip is a bounded row inside
-    // the deck (main + overview stripe), so the deck column keeps a fixed
-    // content height and the library takes everything else. The clamp
-    // guarantees the browser keeps its 220 px floor at every window size.
-    constexpr int kStripRows = 300; // title, transport, beat, auto cue, clocks, pitch
-    constexpr int kWaveCap = 190;   // main waveform + overview stripe
+    // 2CH: keep the original tall waveforms and library. 4/6CH: reserve
+    // one responsive row for real FX return mixer channels 3..6, then let
+    // the library take the remaining space.
+    constexpr int kStripRows = 300;
+    constexpr int kWaveCap = 190;
+    const int extraCount = lean::returnChannelCount(channelMode);
+    const int returnH = extraCount > 0 ? 72 : 0;
+    const int returnGap = extraCount > 0 ? 8 : 0;
+    const int minBrowserH = extraCount > 0 ? 170 : 220;
     const int avail = area.getHeight();
     const int cap = getLocalBounds().getHeight() >= 1200 ? 230 : kWaveCap;
-    const int waveH = juce::jlimit(110, cap, avail - 8 - 220 - kStripRows - 4);
+    const int waveH = juce::jlimit(90, cap,
+        avail - 8 - minBrowserH - returnH - returnGap - kStripRows - 4);
     const int deckH = kStripRows + 4 + waveH;
-    auto browser = area.removeFromBottom(avail - 8 - deckH);
+    auto lower = area.removeFromBottom(
+        juce::jmax(0, avail - 8 - deckH));
     area.removeFromBottom(8);
+    if (extraCount > 0) {
+        auto returnRow = lower.removeFromTop(returnH);
+        // Compact strips do not steal deck width at the 1100px minimum.
+        const int gap = 8;
+        const int stripW = (returnRow.getWidth() - gap * (extraCount - 1))
+                           / extraCount;
+        for (int a = 0; a < extraCount; ++a) {
+            auto strip = returnRow.removeFromLeft(stripW);
+            if (a + 1 < extraCount)
+                returnRow.removeFromLeft(gap);
+            auto& c = returnChannels[a];
+            c.surface.setBounds(strip);
+            strip = strip.reduced(9, 4);
+            auto head = strip.removeFromTop(22);
+            c.title.setBounds(head.removeFromLeft(
+                juce::jmin(head.getWidth(), 120)));
+            c.source.setBounds(head);
+            auto controls = strip.removeFromTop(34);
+            c.pfl.setBounds(controls.removeFromRight(45).reduced(1, 4));
+            c.meter.setBounds(controls.removeFromRight(13).reduced(2, 2));
+            c.fader.setBounds(controls.reduced(4, 2));
+        }
+        lower.removeFromTop(returnGap);
+    }
+    auto browser = lower;
 
     // Club layout: deck | mixer | deck.
     constexpr int centerW = 300;
@@ -1702,7 +1824,10 @@ void MainComponent::resized() {
     // PFL + faders, xfade row pinned to the bottom (DJM-style).
     mixerGlass.setBounds(center);
     center = center.reduced(10, 8);
-    mixerHeader.setBounds(center.removeFromTop(24));
+    auto mixerTop = center.removeFromTop(28);
+    channelModeSelector.setBounds(
+        mixerTop.removeFromRight(86).reduced(2, 1));
+    mixerHeader.setBounds(mixerTop);
 
     auto chanRow = center.removeFromTop(16);
     chanRow.removeFromLeft(56);
