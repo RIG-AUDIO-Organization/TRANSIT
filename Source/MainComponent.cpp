@@ -1,6 +1,7 @@
 // TRANSIT — DJ Software / SPDX-License-Identifier: GPL-3.0-only
 
 #include "MainComponent.h"
+#include "TrimDial.h"
 
 #include <cstdio>
 #include <map>
@@ -211,6 +212,13 @@ void MainComponent::FileList::paintListBoxItem(int row, juce::Graphics& g, int w
     if (row < 0 || row >= (int)rows.size())
         return;
     const Row& r = rows[(size_t)row];
+    if (r.isExample) {
+        // Examples are explicitly labeled, muted, and cannot be loaded.
+        g.setColour(DJLook::dimInk.withAlpha(0.65f));
+        g.drawText(r.name + "  [EXAMPLE]", 12, 0, w - 24, h,
+                   juce::Justification::centredLeft, true);
+        return;
+    }
     const int dateW = w >= 480 ? 92 : 0;
     const int sizeW = w >= 480 ? 78 : 0;
     const int folderW = w >= 320 ? 96 : 0;
@@ -256,13 +264,15 @@ void MainComponent::FileList::paintListBoxItem(int row, juce::Graphics& g, int w
 }
 
 void MainComponent::FileList::listBoxItemDoubleClicked(int row, const juce::MouseEvent&) {
-    if (onDoubleClick)
+    if (row >= 0 && row < (int)rows.size() && !rows[(size_t)row].isExample
+        && onDoubleClick)
         onDoubleClick(row);
 }
 
 void MainComponent::FileList::returnKeyPressed(int row) {
-    if (onDoubleClick)
-        onDoubleClick(row); // G6: Enter activates the selection too
+    if (row >= 0 && row < (int)rows.size() && !rows[(size_t)row].isExample
+        && onDoubleClick)
+        onDoubleClick(row);
 }
 
 MainComponent::MainComponent() : fileList("browser", &fileModel) {
@@ -270,7 +280,7 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
     setWantsKeyboardFocus(true); // transport F-keys start here, then bubble
     audioFormats.registerBasicFormats(); // G6 round 2: duration probes
     const char* names[2] = { "A", "B" };
-    const char* knobNames[4] = { "GAIN", "LOW", "MID", "HIGH" };
+    const char* knobNames[4] = { "TRIM", "LOW", "MID", "HIGH" };
     for (int d = 0; d < 2; ++d) {
         auto& s = strips[d];
         addAndMakeVisible(s.surface);
@@ -455,6 +465,9 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
 
         s.gain.setRange(0.0, 1.25, 0.001);
         s.gain.setValue(1.0);
+        s.gain.getProperties().set("trim", 1);
+        s.gain.setDoubleClickReturnValue(true, 1.0);
+        s.gain.setTooltip("TRIM: 12 o'clock = unity (0 dB); double-click to reset");
         s.gain.onValueChange = [this, d] {
             engine.setGain(d, (float)strips[d].gain.getValue());
         };
@@ -547,6 +560,34 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
     armGlobal(cueBlend, lean::MidiTarget::Blend);
 
     addAndMakeVisible(folderButton);
+    addAndMakeVisible(placesHeading);
+    addAndMakeVisible(musicPlace);
+    addAndMakeVisible(downloadsPlace);
+    addAndMakeVisible(homePlace);
+    addAndMakeVisible(browserHint);
+    placesHeading.setText("PLACES", juce::dontSendNotification);
+    placesHeading.setColour(juce::Label::textColourId, DJLook::accent);
+    placesHeading.setFont(
+        juce::Font(juce::FontOptions{}.withHeight(12.0f)).boldened());
+    browserHint.setText("EXAMPLE TRACKS  /  Choose a place or add a music folder",
+                        juce::dontSendNotification);
+    browserHint.setColour(juce::Label::textColourId, DJLook::dimInk);
+    browserHint.setFont(
+        juce::Font(juce::FontOptions{}.withHeight(11.0f)).boldened());
+    musicPlace.setTooltip("Browse your Music folder");
+    downloadsPlace.setTooltip("Browse Downloads");
+    homePlace.setTooltip("Browse Home folder");
+    musicPlace.onClick = [this] {
+        openPlace(juce::File::getSpecialLocation(
+            juce::File::userHomeDirectory).getChildFile("Music"));
+    };
+    downloadsPlace.onClick = [this] {
+        openPlace(juce::File::getSpecialLocation(
+            juce::File::userHomeDirectory).getChildFile("Downloads"));
+    };
+    homePlace.onClick = [this] {
+        openPlace(juce::File::getSpecialLocation(juce::File::userHomeDirectory));
+    };
     addAndMakeVisible(toA);
     addAndMakeVisible(toB);
     addAndMakeVisible(folderLabel);
@@ -674,6 +715,9 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
     // table once a matching device is opened; loadSettings does that).
     applyMidiRouting();
     loadSettings();
+    // First launch is meaningful before any folder has been selected.
+    // Show labeled non-playable examples with real Places shortcuts.
+    refreshBrowserList();
 
     setSize(1100, 824);
     startTimerHz(30);
@@ -1109,11 +1153,16 @@ void MainComponent::saveSettings() {
 
 void MainComponent::showBrowser(bool show) {
     juce::Component* browserWidgets[] = {
-        &folderButton, &toA, &toB, &folderLabel, &libraryHeader, &searchBox,
-        &browserGlass, &fileList, &midiCombo, &learnButton, &sysStatus
+        &folderButton, &placesHeading, &musicPlace, &downloadsPlace,
+        &homePlace, &browserHint, &toA, &toB, &folderLabel, &libraryHeader,
+        &searchBox, &browserGlass, &fileList, &midiCombo, &learnButton,
+        &sysStatus
     };
     for (auto* w : browserWidgets)
         w->setVisible(show);
+    // The empty-state hint is not a persistent library toolbar item.
+    browserHint.setVisible(show && !fileModel.rows.empty()
+                           && fileModel.rows.front().isExample);
     fxPage.setVisible(!show);
 }
 
@@ -1159,6 +1208,22 @@ void MainComponent::pickAuxPlugin(int aux) {
                      false, false, [] {});
     }
     menu.showMenuAsync(juce::PopupMenu::Options().withParentComponent(this));
+}
+
+void MainComponent::openPlace(const juce::File& directory) {
+    if (!directory.isDirectory()) {
+        sysStatus.setText("Folder not available: " + directory.getFullPathName(),
+                          juce::dontSendNotification);
+        return;
+    }
+    browserDir = directory;
+    indexedFolderLabel = directory.getFullPathName();
+    engine.indexFolder(indexedFolderLabel);
+    scanNoteActive = true;
+    folderLabel.setText(indexedFolderLabel + " - scanning...",
+                        juce::dontSendNotification);
+    searchBox.setText("", juce::dontSendNotification);
+    refreshBrowserList();
 }
 
 void MainComponent::openFolder() {
@@ -1230,6 +1295,20 @@ void MainComponent::refreshBrowserList() {
             row.time = probeDuration(f);
         fileModel.rows.push_back(std::move(row));
     }
+    // Onboarding examples are intentionally not backed by disk paths.
+    // Never feed a placeholder into the decoder or persistent library.
+    const bool showExamples = paths.isEmpty() && q.isEmpty();
+    if (showExamples) {
+        for (const auto& name : { "Hypnotic Groove 01",
+                                  "Late Night Dub 02",
+                                  "Warm-Up Texture 03" }) {
+            FileList::Row example;
+            example.name = name;
+            example.isExample = true;
+            fileModel.rows.push_back(std::move(example));
+        }
+    }
+    browserHint.setVisible(showExamples);
     fileList.updateContent();
     // W9: apply the stored list position once, after the first real
     // population (an empty refresh keeps it pending for the next one).
@@ -1250,7 +1329,8 @@ juce::String MainComponent::probeDuration(const juce::File& file) {
 }
 
 void MainComponent::loadBrowserRow(int row) {
-    if (row < 0 || row >= (int)fileModel.rows.size())
+    if (row < 0 || row >= (int)fileModel.rows.size()
+        || fileModel.rows[(size_t)row].isExample)
         return;
     const int deck = toB.getToggleState() ? 1 : 0;
     const juce::File file(fileModel.rows[(size_t)row].path);
@@ -1710,6 +1790,13 @@ void MainComponent::resized() {
     folderLabel.setBounds(top.removeFromLeft(top.getWidth() / 2));
     searchBox.setBounds(top);
     inner.removeFromTop(6);
+    auto placesRow = inner.removeFromTop(30);
+    placesHeading.setBounds(placesRow.removeFromLeft(62));
+    musicPlace.setBounds(placesRow.removeFromLeft(75).reduced(2, 3));
+    downloadsPlace.setBounds(placesRow.removeFromLeft(106).reduced(2, 3));
+    homePlace.setBounds(placesRow.removeFromLeft(75).reduced(2, 3));
+    browserHint.setBounds(placesRow.reduced(8, 0));
+    inner.removeFromTop(4);
     auto sys = inner.removeFromTop(30);
     midiCombo.setBounds(sys.removeFromLeft(170));
     sys.removeFromLeft(8);

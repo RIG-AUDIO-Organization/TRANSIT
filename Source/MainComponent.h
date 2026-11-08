@@ -37,6 +37,14 @@ public:
         strips[deck & 1].wave->setZoomIndex(idx);
     }
     void harnessShowFxPage(bool show) { showBrowser(!show); }
+    bool harnessShowsExampleTracks() const {
+        return !fileModel.rows.empty() && fileModel.rows.front().isExample;
+    }
+    void harnessClearBrowser() {
+        browserDir = juce::File();
+        searchBox.setText({}, juce::dontSendNotification);
+        refreshBrowserList();
+    }
     // Visual regression seam: catch clipped/overlapping deck transport at
     // each supported viewport before recording screenshots.
     bool harnessDeckLayoutValid() const {
@@ -236,6 +244,7 @@ private:
             juce::String date;
             juce::String bpm;  // G6 round 2: tempo estimate ("—" when unknown)
             juce::String time; // G6 round 2: duration, m:ss
+            bool isExample = false; // first-run illustration, never playable
         };
         std::vector<Row> rows;
         std::function<void(int)> onDoubleClick;
@@ -253,6 +262,7 @@ private:
     bool keyPressed(const juce::KeyPress& key) override;
     void openFile(int deck);
     void openFolder();
+    void openPlace(const juce::File& directory);
     void openSettings();
     void setBeatModeUI(bool syncMode);
     void showBrowser(bool show);
@@ -291,7 +301,12 @@ private:
     juce::AudioFormatManager audioFormats;
     juce::Slider xfade{ juce::Slider::LinearHorizontal, juce::Slider::NoTextBox };
     juce::Slider cueBlend{ juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
-    juce::TextButton folderButton{ "Folder..." };
+    juce::TextButton folderButton{ "Add Folder..." };
+    juce::Label placesHeading;
+    juce::TextButton musicPlace{ "Music" };
+    juce::TextButton downloadsPlace{ "Downloads" };
+    juce::TextButton homePlace{ "Home" };
+    juce::Label browserHint;
     juce::TextButton toA{ "To A" };
     juce::TextButton toB{ "To B" };
     juce::Label folderLabel;
