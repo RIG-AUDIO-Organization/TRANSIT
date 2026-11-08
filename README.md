@@ -89,6 +89,33 @@ AppImages, installers, or official GitHub Releases. CI does not establish
 suitability for live DJ use. If the workflow fails, no working artifact is
 guaranteed.
 
+
+## Mixer channel modes (developer preview)
+
+The central mixer offers **2 CH**, **4 CH** and **6 CH**, with the selected
+mode stored in `settings.txt` and restored on launch. The default, **2 CH**,
+keeps the existing layout and two fully independent track decks.
+
+- **2 CH:** decks A/B, original crossfader, EQ and PFL.
+- **4 CH:** decks A/B plus independently metered stereo FX return channels
+  CH 3/CH 4 (the first two AUX buses).
+- **6 CH:** decks A/B plus CH 3 through CH 6 (all four AUX buses).
+
+Each FX return channel has its own gain fader, pre-fader listen (PFL), source
+label and signal meter. FX return level and the existing FX-page RET control
+refer to the same audio parameter. The return strips adapt to the available
+width, appearing between the decks and browser rather than squeezing deck
+transport buttons. Changing modes never unloads running plugins, changes
+recordings or invents new player decks. Hiding a return channel turns off its
+PFL but does not disable its existing FX audio routing.
+
+**Important:** these are *mixer channel* configurations, **not 4/6
+independently playable music decks or 4/6 hardware output channels**. An FX
+return produces sound only if a source deck sends audio to its FX bus and a
+plugin processes it. Headphone PFL monitoring requires an appropriate
+four-output audio device, as before. Extra deck transports and independently
+assignable hardware inputs would require a separate engine expansion.
+
 ## Smart Cue developer preview
 
 TRANSIT's Smart Cue system analyzes loaded stereo PCM off the audio thread.

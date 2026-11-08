@@ -146,6 +146,11 @@ public:
     bool isPreviewing(int deck) const { return previewing[deck & 1]; }
     void setCueBlend(float v) { mixer.setCueBlend(v); }
     bool hasPhones() const { return fourOuts; }
+    // Separate PFL for each FX return strip. If no 4-output device is
+    // connected, the UI still retains the toggle for a later device.
+    void setAuxPfl(int aux, bool on) { mixer.setAuxCue(aux, on); }
+    bool isAuxPfl(int aux) const { return mixer.auxCueEnabled(aux); }
+    float auxChannelPeak(int aux) const { return mixer.auxChannelPeak(aux); }
 
     // Transport CUE (CDJ-style): playing + press -> pause at cue point;
     // paused + hold -> preview from cue point, release -> back to cue.

@@ -410,6 +410,21 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Responsive channel-count sweep at the minimum viewport, before
+    // loading any track: show real return controls, not fake deck transports.
+    for (const int channels : { 2, 4, 6 }) {
+        content.harnessSetChannelCount(channels);
+        window.useViewport(1100, 824);
+        if (content.harnessChannelCount() != channels
+            || !content.harnessReturnLayoutValid()
+            || !content.harnessDeckLayoutValid()) {
+            fail("mixer channel mode control clipped at minimum viewport");
+            return 1;
+        }
+        snapshot(content, outDir, "channels" + juce::String(channels), 1100, 824);
+    }
+    content.harnessSetChannelCount(2); // restore legacy layout
+
     // Pass 1: empty state (before any file is loaded).
     for (const Viewport& vp : kViewports) {
         window.useViewport(vp.w, vp.h);

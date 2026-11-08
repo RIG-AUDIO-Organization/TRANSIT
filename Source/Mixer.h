@@ -114,7 +114,21 @@ public:
     }
     void setAuxReturn(int aux, float v) {
         if (aux >= 0 && aux < kAuxBuses)
-            auxReturn[aux].setTarget(v);
+            auxReturn[aux].setTarget(std::clamp(v, 0.0f, 1.25f));
+    }
+    // FX return channels are genuine independent stereo mixer paths.
+    // PFL taps the processed return before its return fader.
+    void setAuxCue(int aux, bool on) {
+        if (aux >= 0 && aux < kAuxBuses)
+            auxCue[aux].store(on, std::memory_order_seq_cst);
+    }
+    bool auxCueEnabled(int aux) const {
+        return aux >= 0 && aux < kAuxBuses
+            && auxCue[aux].load(std::memory_order_seq_cst);
+    }
+    float auxChannelPeak(int aux) const {
+        return aux >= 0 && aux < kAuxBuses
+            ? auxPeak[aux].load(std::memory_order_seq_cst) : 0.0f;
     }
     void setAuxHost(AuxHost* host) { auxHost = host; }
     void reset();
@@ -158,6 +172,8 @@ private:
     SmoothFloat cueBlend{ 1.0f }; // phones: blend * cue + (1 - blend) * master
     SmoothFloat phonesLevel{ 1.0f }; // phones output gain, 0..1.25
     SmoothFloat auxReturn[kAuxBuses];
+    std::atomic<bool> auxCue[kAuxBuses]{};
+    std::atomic<float> auxPeak[kAuxBuses]{};
     AuxHost* auxHost = nullptr; // set once before audio starts, never changes
     std::atomic<double> outputRate{ 44100.0 };
     float stripPeak[kChannels] = { 0.0f, 0.0f }; // audio thread only

@@ -253,6 +253,10 @@ target_compile_definitions(TRANSIT PRIVATE JUCE_PLUGINHOST_VST3=1)
 # Headless tests (plain C++ where possible; no JUCE, no hardware required)
 # ---------------------------------------------------------------------------
 include(CTest)
+add_executable(ChannelModeTest Tests/ChannelModeTest.cpp)
+target_include_directories(ChannelModeTest PRIVATE Source)
+add_test(NAME channel_mode_test COMMAND ChannelModeTest)
+
 add_executable(TrimDialTest Tests/TrimDialTest.cpp)
 target_include_directories(TrimDialTest PRIVATE Source)
 add_test(NAME trim_dial_test COMMAND TrimDialTest)
@@ -493,7 +497,7 @@ target_compile_definitions(FxProbe PRIVATE
 # sources internally; on those targets -Werror is attached per first-party
 # source file (above) so upstream sources are never gated by it.
 # ---------------------------------------------------------------------------
-foreach(t TrimDialTest NullRender DecodeTest MixerTest KeylockTest WaveformTest MidiQueueTest
+foreach(t ChannelModeTest TrimDialTest NullRender DecodeTest MixerTest KeylockTest WaveformTest MidiQueueTest
           LoadScheduleTest DeckLoadTest FxScanTest LibraryTest MidiMapTest
           RecorderTest AnalyzeTest SyncTest DspBench)
   if(MSVC)
