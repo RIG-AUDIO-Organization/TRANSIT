@@ -3,6 +3,7 @@
 #pragma once
 
 #include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -46,6 +47,19 @@ public:
     // that are not in the index are omitted from the result.
     std::vector<std::pair<std::string, TrackMeta>> metadataFor(
         const std::vector<std::string>& pathsUtf8);
+
+    // Cue memory is independent from the browsable track index: clearing
+    // an index never erases a DJ's manually saved cue points.
+    struct CuePoint {
+        double seconds = 0.0;
+        bool manual = false;
+        int mode = 0; // 0=off, 1=first audio, 2=smart onset
+    };
+    // Return records only when source file size and mtime still match.
+    // Manual cues override every auto-cue mode. Auto cues are mode-specific.
+    std::optional<CuePoint> cueFor(const std::string& path, int autoMode) const;
+    bool putCue(const std::string& path, double seconds, bool manual, int mode);
+    bool removeCue(const std::string& path);
 
     static bool isAudioFile(const std::string& filename);
 

@@ -410,22 +410,26 @@ bool AudioEngine::toggleRecord(juce::String& status) {    if (recorder.isRecordi
     return true;
 }
 
-void AudioEngine::loadFile(int deck, const juce::String& path) {
+bool AudioEngine::loadFile(int deck, const juce::String& path) {
     deck &= 1;
+    if (loadLocked[deck] && mixer.channel(deck).deck.isPlaying())
+        return false;
+    ensureDb();
     LoadJob job;
     job.kind = LoadJob::Kind::Load;
     job.deck = deck;
     job.token = gates[deck].submit(); // newest-wins: supersedes any in-flight
     job.path = path.toStdString();
     job.fileName = juce::File(path).getFileName().toStdString();
+    job.cueMode = cueModes[deck];
     states[deck].store((int)lean::LoadState::Loading, std::memory_order_seq_cst);
     errors[deck] = {};
-    names[deck] = {};
     {
         std::lock_guard<std::mutex> lock(jobMutex);
         jobs.push_back(std::move(job));
     }
     jobCv.notify_one();
+    return true;
 }
 
 void AudioEngine::indexFolder(const juce::String& path) {
@@ -544,7 +548,25 @@ void AudioEngine::runLoadJob(const LoadJob& job) {
     LoadResult r;
     r.ok = true;
     r.fileName = job.fileName;
+    r.path = job.path;
     r.bpm = lean::detectBpm(decoded.stereo.data(), frames, rate);
+    const auto detected = lean::detectAutoCue(decoded.stereo.data(), frames,
+                                              rate, job.cueMode);
+    r.detectedCueSeconds = detected.seconds;
+    r.detectedCue = detected.detected;
+    const auto saved = library.cueFor(job.path, (int)job.cueMode);
+    if (saved) {
+        r.selectedCueSeconds = saved->seconds;
+        r.selectedManual = saved->manual;
+    } else if (detected.detected) {
+        r.selectedCueSeconds = detected.seconds;
+        // This is a cache of the detected location, never a manual edit.
+        // A concurrently saved manual cue cannot be overwritten by the
+        // database UPSERT's WHERE guard.
+        if (gate.isCurrent(token))
+            (void)library.putCue(job.path, detected.seconds, false,
+                                 (int)job.cueMode);
+    }
     r.wave = lean::buildWaveform(decoded.stereo.data(), (std::int64_t)frames,
                                  rate);
     r.stereo = std::move(decoded.stereo);
@@ -582,11 +604,18 @@ void AudioEngine::handleAsyncUpdate() {
         LoadResult& r = local[d];
         if (!gates[d].accept(r.token))
             continue; // newest-wins: a newer submission owns this deck
+        // Loading was allowed when requested, but the user might have
+        // pressed Play before the background decode completed.
+        if (loadLocked[d] && mixer.channel(d).deck.isPlaying()) {
+            states[d].store((int)(fileLoaded[d] ? lean::LoadState::Ready
+                                                 : lean::LoadState::Empty),
+                            std::memory_order_seq_cst);
+            continue;
+        }
         if (!r.ok) {
-            // Previous track (if any) stays loaded; the attempt failed.
             errors[d] = juce::String(r.error);
-            names[d] = {};
-            states[d].store((int)lean::LoadState::Error,
+            states[d].store((int)(fileLoaded[d] ? lean::LoadState::Ready
+                                                 : lean::LoadState::Error),
                             std::memory_order_seq_cst);
             continue;
         }
@@ -597,14 +626,57 @@ void AudioEngine::handleAsyncUpdate() {
         names[d] = juce::String(r.fileName);
         errors[d] = {};
         fileLoaded[d] = true;
+        loadedPaths[d] = std::move(r.path);
+        autoCueDetected[d] = r.detectedCue;
+        autoCueSeconds[d] = r.detectedCueSeconds;
+        manualCue[d] = r.selectedManual;
         states[d].store((int)lean::LoadState::Ready, std::memory_order_seq_cst);
-        mixer.channel(d).deck.load(std::move(r.stereo), r.rate); // staged
+        auto& deck = mixer.channel(d).deck;
+        deck.load(std::move(r.stereo), r.rate); // staged
+        deck.setCuePointSeconds(r.selectedCueSeconds);
+        deck.setPositionSeconds(r.selectedCueSeconds); // remains paused
+        previewing[d] = false;
         if (auto* device = deviceManager.getCurrentAudioDevice())
             mixer.setOutputRate(device->getCurrentSampleRate());
         mixer.reset(); // deferred EQ clear (Eq3::reset is a request)
         if (onDeckReady)
             onDeckReady(d);
     }
+}
+
+bool AudioEngine::setCueAtPlayhead(int deck) {
+    deck &= 1;
+    if (!fileLoaded[deck] || loadedPaths[deck].empty())
+        return false;
+    ensureDb();
+    auto& d = mixer.channel(deck).deck;
+    const double seconds = d.getPositionSeconds();
+    if (!library.putCue(loadedPaths[deck], seconds, true, (int)cueModes[deck]))
+        return false;
+    d.setCuePointSeconds(seconds);
+    manualCue[deck] = true;
+    return true;
+}
+
+bool AudioEngine::resetCueToAuto(int deck) {
+    deck &= 1;
+    if (!fileLoaded[deck] || loadedPaths[deck].empty()
+        || mixer.channel(deck).deck.isPlaying())
+        return false;
+    ensureDb();
+    if (!library.removeCue(loadedPaths[deck]))
+        return false;
+    // This uses the last decoded auto-cue analysis. For a different mode,
+    // reload the track to recalculate rather than inventing an onset.
+    const double cue = cueModes[deck] != lean::AutoCueMode::Off
+        && autoCueDetected[deck] ? autoCueSeconds[deck] : 0.0;
+    auto& d = mixer.channel(deck).deck;
+    d.setCuePointSeconds(cue);
+    d.setPositionSeconds(cue);
+    manualCue[deck] = false;
+    if (autoCueDetected[deck] && cueModes[deck] != lean::AutoCueMode::Off)
+        (void)library.putCue(loadedPaths[deck], cue, false, (int)cueModes[deck]);
+    return true;
 }
 
 float AudioEngine::takePeak() {

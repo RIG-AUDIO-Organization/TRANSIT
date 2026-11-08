@@ -7,6 +7,7 @@
 #include "TempDir.h"
 
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -171,6 +172,43 @@ int run() {
     check(garbage.size() == 1 && !(garbage[0].second.bpm > 0.0)
               && !(garbage[0].second.seconds > 0.0),
           "unreadable file stays unknown");
+
+    // Cues persist independently of whether a track appears in the index.
+    // Manual edits must override an automatic cue, and an updated file
+    // invalidates old time positions.
+    const std::string cueFile = clickPath.string();
+    check(lib.putCue(cueFile, 0.45, false, 2), "cache smart auto cue");
+    const auto autoCue = lib.cueFor(cueFile, 2);
+    check(autoCue.has_value() && !autoCue->manual
+              && std::abs(autoCue->seconds - 0.45) < 0.001,
+          "retrieve auto cue for matching mode");
+    check(!lib.cueFor(cueFile, 1).has_value(),
+          "other auto algorithm cannot reuse stale-mode cue");
+    check(lib.putCue(cueFile, 1.25, true, 2), "set manual override");
+    check(lib.putCue(cueFile, 0.1, false, 2), "auto upsert cannot override manual");
+    const auto manual = lib.cueFor(cueFile, 1);
+    check(manual.has_value() && manual->manual
+              && std::abs(manual->seconds - 1.25) < 0.001,
+          "manual cue wins across auto modes");
+    {
+        lean::Library reopened;
+        std::string reopenError;
+        check(reopened.open((dir / "lib.db").string(), reopenError),
+              "reopen cue database");
+        const auto saved = reopened.cueFor(cueFile, 2);
+        check(saved.has_value() && saved->manual
+                  && std::abs(saved->seconds - 1.25) < 0.001,
+              "manual cue survives database reopen");
+    }
+    check(lib.removeCue(cueFile), "clear cue");
+    check(!lib.cueFor(cueFile, 2).has_value(), "cleared cue is absent");
+    check(lib.putCue(cueFile, 2.0, true, 1), "restore test cue");
+    {
+        std::ofstream append(clickPath, std::ios::binary | std::ios::app);
+        append.put('X');
+    }
+    check(!lib.cueFor(cueFile, 1).has_value(),
+          "changed file invalidates saved cue");
 
     fs::remove_all(dir, ec);
     if (failures == 0)

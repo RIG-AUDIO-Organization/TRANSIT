@@ -9,6 +9,8 @@
 #include <cctype>
 #include <chrono>
 #include <filesystem>
+#include <cmath>
+#include <limits>
 #include <string_view>
 #include <utility>
 
@@ -64,6 +66,22 @@ std::filesystem::path fromUtf8(const std::string& s) {
 // track is far larger than the file itself.
 constexpr long long kMaxAnalyseBytes = 64LL * 1024LL * 1024LL;
 
+struct FileStamp {
+    long long size = 0;
+    long long modified = 0;
+};
+std::optional<FileStamp> fileStamp(const std::string& path) {
+    const auto p = fromUtf8(path);
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(p, ec);
+    if (ec || size > (std::uintmax_t)std::numeric_limits<long long>::max())
+        return std::nullopt;
+    const auto time = std::filesystem::last_write_time(p, ec);
+    if (ec)
+        return std::nullopt;
+    return FileStamp{ (long long)size, (long long)time.time_since_epoch().count() };
+}
+
 // Decodes the file and derives its duration and tempo estimate. Failures
 // leave both values unknown (0.0) — the row is still indexed.
 bool analyseFile(const std::string& utf8Path, double& bpmOut,
@@ -118,6 +136,14 @@ bool Library::open(const std::string& dbPath, std::string& error) {
     }
     exec(this, db,
          "CREATE INDEX IF NOT EXISTS idx_tracks_name ON tracks(name COLLATE NOCASE)");
+    if (!exec(this, db,
+              "CREATE TABLE IF NOT EXISTS cue_points("
+              "path TEXT PRIMARY KEY, seconds REAL NOT NULL, "
+              "manual INTEGER NOT NULL, mode INTEGER NOT NULL, "
+              "size INTEGER NOT NULL, modified INTEGER NOT NULL)")) {
+        error = "cue memory schema failed";
+        return false;
+    }
     return true;
 }
 
@@ -345,6 +371,86 @@ int Library::count() {
         sqlite3_finalize(stmt);
     }
     return n;
+}
+
+
+std::optional<Library::CuePoint> Library::cueFor(const std::string& path,
+                                                int autoMode) const {
+    const auto stamp = fileStamp(path);
+    if (!stamp)
+        return std::nullopt;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!db)
+        return std::nullopt;
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(
+            db,
+            "SELECT seconds,manual,mode FROM cue_points "
+            "WHERE path=? AND size=? AND modified=? "
+            "AND (manual=1 OR mode=?)",
+            -1, &stmt, nullptr) != SQLITE_OK)
+        return std::nullopt;
+    sqlite3_bind_text(stmt, 1, path.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 2, (sqlite3_int64)stamp->size);
+    sqlite3_bind_int64(stmt, 3, (sqlite3_int64)stamp->modified);
+    sqlite3_bind_int(stmt, 4, autoMode);
+    std::optional<CuePoint> out;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        CuePoint rec;
+        rec.seconds = sqlite3_column_double(stmt, 0);
+        rec.manual = sqlite3_column_int(stmt, 1) != 0;
+        rec.mode = sqlite3_column_int(stmt, 2);
+        if (std::isfinite(rec.seconds) && rec.seconds >= 0.0)
+            out = rec;
+    }
+    sqlite3_finalize(stmt);
+    return out;
+}
+
+bool Library::putCue(const std::string& path, double seconds,
+                     bool manual, int mode) {
+    if (path.empty() || !std::isfinite(seconds) || seconds < 0.0)
+        return false;
+    const auto stamp = fileStamp(path);
+    if (!stamp)
+        return false;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!db)
+        return false;
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(
+            db, "INSERT INTO cue_points(path,seconds,manual,mode,size,modified) "
+                "VALUES(?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET "
+                "seconds=excluded.seconds,manual=excluded.manual,"
+                "mode=excluded.mode,size=excluded.size,modified=excluded.modified "
+                "WHERE excluded.manual=1 OR cue_points.manual=0 "
+                "OR cue_points.size!=excluded.size "
+                "OR cue_points.modified!=excluded.modified",
+            -1, &stmt, nullptr) != SQLITE_OK)
+        return false;
+    sqlite3_bind_text(stmt, 1, path.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_double(stmt, 2, seconds);
+    sqlite3_bind_int(stmt, 3, manual ? 1 : 0);
+    sqlite3_bind_int(stmt, 4, mode);
+    sqlite3_bind_int64(stmt, 5, (sqlite3_int64)stamp->size);
+    sqlite3_bind_int64(stmt, 6, (sqlite3_int64)stamp->modified);
+    const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+bool Library::removeCue(const std::string& path) {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!db)
+        return false;
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, "DELETE FROM cue_points WHERE path=?",
+                           -1, &stmt, nullptr) != SQLITE_OK)
+        return false;
+    sqlite3_bind_text(stmt, 1, path.c_str(), -1, SQLITE_TRANSIENT);
+    const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+    sqlite3_finalize(stmt);
+    return ok;
 }
 
 } // namespace lean

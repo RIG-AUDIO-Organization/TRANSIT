@@ -194,6 +194,10 @@ private:
         juce::TextButton back{ "<" };
         juce::TextButton fwd{ "+4" };
         juce::TextButton tempoReset{ "0%" };
+        juce::TextButton setCue{ "SET CUE" };
+        juce::TextButton resetCue{ "AUTO" };
+        juce::TextButton loadLock{ "LOCK" };
+        juce::ComboBox autoCueMode;
         juce::Slider tempo{ juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
         juce::Slider gain{ juce::Slider::RotaryHorizontalVerticalDrag,
                            juce::Slider::TextBoxBelow };
@@ -211,6 +215,7 @@ private:
         juce::Label elapsedCaption;
         juce::Label remainingCaption;
         juce::Label remaining;
+        juce::Label cueReadout;
         juce::TextButton zoomInBtn{ "+" };
         juce::TextButton zoomOutBtn{ "-" };
         juce::Label knobCaps[4];

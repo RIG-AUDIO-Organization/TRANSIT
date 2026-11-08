@@ -89,6 +89,29 @@ AppImages, installers, or official GitHub Releases. CI does not establish
 suitability for live DJ use. If the workflow fails, no working artifact is
 guaranteed.
 
+## Smart Cue developer preview
+
+TRANSIT's Smart Cue system analyzes loaded stereo PCM off the audio thread.
+Each deck can use **Off**, **First Audio** (the first sustained audible
+material), or **Smart Onset** (prefer a substantial transient over a quiet
+lead-in). Detection is heuristic and cannot reliably identify a true downbeat
+without a verified beat grid. Inconclusive tracks start from the beginning.
+
+The deck control strip includes the mode selector, **SET CUE** (stores the
+current position as a manual cue), **AUTO** (clears a manual override and
+returns to the latest detected cue), and **LOCK** (prevents replacing a deck
+while it plays). The default is Smart Onset with load lock enabled.
+
+Cue positions persist in the local SQLite library across launches and remain
+separate from the searchable track index. A file's size and modification
+timestamp must still match for a saved cue to be reused. Manual cues take
+precedence. Changing modes reloads an idle deck; on a playing deck the
+selection applies on the next load. Manual cue editing while playing is
+supported, but automatic reset requires the deck to be stopped.
+
+There is no claim of musical downbeat accuracy, latency-free seeking, or
+production-ready operation. Verify every suggested cue by ear.
+
 ## Tests
 
 Headless gates run via CTest (no audio hardware or display required):

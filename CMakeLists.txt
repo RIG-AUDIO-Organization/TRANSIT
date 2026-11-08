@@ -132,7 +132,8 @@ set(TRANSIT_FIRSTPARTY_SOURCES
   Tools/FxProbe.cpp
   # JUCE-linked test target: strict flags attach per source file here
   # (target-wide -Werror would also gate the JUCE module TUs inside it).
-  Tests/FxRackTest.cpp)
+  Tests/FxRackTest.cpp
+  Tests/AutoCueTest.cpp)
 
 set(TRANSIT_WARNING_FLAGS)
 if(MSVC)
@@ -256,6 +257,10 @@ add_executable(NullRender Tests/NullRender.cpp Source/Deck.cpp)
 target_include_directories(NullRender PRIVATE Source)
 target_link_libraries(NullRender PRIVATE signalsmith-stretch)
 add_test(NAME null_render COMMAND NullRender)
+
+add_executable(AutoCueTest Tests/AutoCueTest.cpp)
+target_include_directories(AutoCueTest PRIVATE Source)
+add_test(NAME autocue_test COMMAND AutoCueTest)
 
 add_executable(DecodeTest Tests/DecodeTest.cpp Source/Decode.cpp)
 target_include_directories(DecodeTest PRIVATE Source)
