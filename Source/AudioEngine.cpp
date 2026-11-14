@@ -553,9 +553,11 @@ void AudioEngine::runLoadJob(const LoadJob& job) {
     r.detectedCueSeconds = detected.seconds;
     r.detectedCue = detected.detected;
     const auto saved = library.cueFor(job.path, (int)job.cueMode);
-    if (saved) {
+    if (saved && saved->manual) {
+        // User edits always win; ignore stale automatic cue records created
+        // by older detectors so updated analysis actually takes effect.
         r.selectedCueSeconds = saved->seconds;
-        r.selectedManual = saved->manual;
+        r.selectedManual = true;
     } else if (detected.detected) {
         r.selectedCueSeconds = detected.seconds;
         // This is a cache of the detected location, never a manual edit.

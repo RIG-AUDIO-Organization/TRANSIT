@@ -11,9 +11,8 @@
 
 namespace lean {
 
-// Never guess a downbeat without a beat grid. Both modes find an audible
-// onset; FirstAudio is conservative about any sustained audio, while
-// SmartOnset prefers a salient attack over a very quiet ambient lead-in.
+// We find a musical onset, not a beat-grid downbeat. FirstAudio favors the
+// earliest continuous signal; SmartOnset favors a later salient attack.
 enum class AutoCueMode { Off = 0, FirstAudio = 1, SmartOnset = 2 };
 
 struct AutoCueResult {
@@ -22,23 +21,23 @@ struct AutoCueResult {
     bool detected = false;
 };
 
-// Pure, offline PCM analysis. All allocation and scanning belong to the
-// background decoder worker, never the realtime callback.
-// Bounded to the first 90 seconds to avoid analyzing an entire DJ set file.
+// Offline decoder-worker analysis, never the audio callback. The limit and
+// sample-window arithmetic are bounded even for malformed file metadata.
 inline AutoCueResult detectAutoCue(const float* stereo, int frames, double rate,
                                    AutoCueMode mode) {
     AutoCueResult out;
     if (mode == AutoCueMode::Off || stereo == nullptr || frames <= 0
-        || !std::isfinite(rate) || rate < 1000.0)
+        || !std::isfinite(rate) || rate < 1000.0 || rate > 768000.0)
         return out;
 
     const int windowFrames = std::max(1, (int)(rate * 0.01)); // 10 ms
-    const int limit = std::min(frames, (int)(rate * 90.0));
+    const int limit = (int)std::min((double)frames, rate * 90.0);
     const int count = limit / windowFrames;
     if (count < 3)
         return out;
 
-    // RMS envelope. Mono-invariant measurement uses the louder of L/R.
+    // Channel-independent RMS. Do not reject mono-like L-only or R-only
+    // audio, and never propagate NaN/Inf into thresholds.
     std::vector<float> levels;
     levels.reserve((std::size_t)count);
     for (int i = 0; i < count; ++i) {
@@ -46,58 +45,74 @@ inline AutoCueResult detectAutoCue(const float* stereo, int frames, double rate,
         const std::size_t start = (std::size_t)i * (std::size_t)windowFrames * 2u;
         for (int j = 0; j < windowFrames; ++j) {
             const std::size_t at = start + (std::size_t)j * 2u;
-            const float l = stereo[at], r = stereo[at + 1];
-            const double v = (std::isfinite(l) && std::isfinite(r))
-                ? (double)std::max(std::abs(l), std::abs(r)) : 0.0;
+            const double l = std::isfinite(stereo[at]) ? std::abs((double)stereo[at]) : 0.0;
+            const double r = std::isfinite(stereo[at + 1u])
+                ? std::abs((double)stereo[at + 1u]) : 0.0;
+            const double v = std::max(l, r);
             sum += v * v;
         }
         levels.push_back((float)std::sqrt(sum / (double)windowFrames));
     }
 
-    // Robust low percentile from the beginning; a transient click does
-    // not set the noise floor. A fixed -54 dBFS minimum avoids noise hunts.
-    const int noiseCount = std::min(count, 500); // first 5 seconds
-    std::vector<float> sorted(levels.begin(), levels.begin() + noiseCount);
-    const std::size_t percentile = (std::size_t)(noiseCount / 5);
-    std::nth_element(sorted.begin(), sorted.begin() + (std::ptrdiff_t)percentile,
-                     sorted.end());
-    const float floor = sorted[percentile];
-    const float threshold = std::max(0.002f, floor * 4.0f);
+    // Approximate 99th-percentile peak: isolated one-frame pops should not
+    // become the track's reference level. Use the quiet fifth of the first
+    // five seconds to distinguish a noise-only lead-in from musical content.
+    std::vector<float> ordered = levels;
+    const std::size_t peakIndex = (ordered.size() - 1u) * 99u / 100u;
+    std::nth_element(ordered.begin(), ordered.begin() + (std::ptrdiff_t)peakIndex,
+                     ordered.end());
+    const float peak = ordered[peakIndex];
+    if (!std::isfinite(peak) || peak < 0.00005f)
+        return out;
+    const int noiseCount = std::min(count, 500);
+    ordered.assign(levels.begin(), levels.begin() + noiseCount);
+    const std::size_t noiseIndex = (ordered.size() - 1u) / 5u;
+    std::nth_element(ordered.begin(), ordered.begin() + (std::ptrdiff_t)noiseIndex,
+                     ordered.end());
+    const float background = ordered[noiseIndex];
+    const bool backgroundOnly = background > 0.00005f
+        && peak > background * 5.0f;
+    // Relative threshold handles quiet masters; a floor cap preserves quiet
+    // fades before later loud drops. For a noisy lead-in, require signal
+    // distinctly above that noise rather than triggering at sample zero.
+    const float threshold = backgroundOnly
+        ? std::max(0.00008f, std::max(background * 2.5f,
+                                      std::min(0.002f, peak * 0.025f)))
+        : std::max(0.00008f, std::min(0.002f, peak * 0.1f));
 
     const auto sustained = [&](int i, float level) {
         if (i + 2 >= count)
             return false;
-        // Reject one-window transients and single isolated clicks.
         return levels[(std::size_t)i] >= level
             && levels[(std::size_t)i + 1u] >= level * 0.7f
             && levels[(std::size_t)i + 2u] >= level * 0.45f;
     };
-
     int first = -1;
-    int transient = -1;
+    int salient = -1;
     for (int i = 0; i + 2 < count; ++i) {
         const float rms = levels[(std::size_t)i];
-        if (first < 0 && rms >= threshold && sustained(i, threshold))
+        if (first < 0 && sustained(i, threshold))
             first = i;
-        if (mode == AutoCueMode::SmartOnset && transient < 0
-            && rms >= threshold * 2.0f && sustained(i, threshold * 1.3f)) {
-            // Compare against up to 30 ms before the attack, not the
-            // immediate preceding frame (which may already be rising).
-            const float prior = levels[(std::size_t)(i >= 3 ? i - 3 : 0)];
-            if (rms > std::max(threshold * 1.5f, prior * 2.8f))
-                transient = i;
-        }
+        if (mode != AutoCueMode::SmartOnset || salient >= 0)
+            continue;
+        // Salience needs a sustained rise over the local 30-ms past AND a
+        // meaningful portion of the track's envelope. A single pop never
+        // counts, even if extremely loud.
+        const float before = levels[(std::size_t)(i >= 3 ? i - 3 : 0)];
+        const float strong = std::max(threshold * 2.0f, peak * 0.14f);
+        if (rms >= strong && sustained(i, std::max(strong * 0.65f, threshold))
+            && rms >= std::max(before * 2.8f, strong))
+            salient = i;
     }
-
-    const int selected = mode == AutoCueMode::SmartOnset && transient >= 0
-        ? transient : first;
+    const int selected = mode == AutoCueMode::SmartOnset && salient >= 0
+        ? salient : first;
     if (selected < 0)
         return out;
 
-    // Back off one analysis window for reliable cue-preview attack.
+    // One short analysis frame of pre-roll keeps the transient intact.
     out.seconds = std::max(0.0, (double)(selected - 1) * (double)windowFrames / rate);
     out.detected = true;
-    out.confidence = selected == transient && transient >= 0 ? 0.90f : 0.65f;
+    out.confidence = salient >= 0 && selected == salient ? 0.9f : 0.65f;
     return out;
 }
 
