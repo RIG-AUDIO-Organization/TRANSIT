@@ -12,10 +12,22 @@ AudioEngine::AudioEngine() {
     // Prefer 4 outputs (master 1/2 + phones 3/4); fall back to stereo.
     juce::AudioDeviceManager::AudioDeviceSetup setup;
     deviceManager.getAudioDeviceSetup(setup);
+    // Fresh-session defaults only. JUCE may choose a device-specific rate
+    // and buffer; request our defaults only if explicitly supported.
+    if (auto* device = deviceManager.getCurrentAudioDevice()) {
+        const auto rates = device->getAvailableSampleRates();
+        const auto buffers = device->getAvailableBufferSizes();
+        for (double r : rates)
+            if (std::abs(r - 44100.0) < 1.0)
+                setup.sampleRate = 44100.0;
+        if (buffers.contains(256))
+            setup.bufferSize = 256;
+    }
     applySetup(setup);
     mixer.setAuxHost(&fxRack);
     if (auto* device = deviceManager.getCurrentAudioDevice())
-        fxRack.prepare(device->getCurrentSampleRate(), 1024);
+        fxRack.prepare(device->getCurrentSampleRate(),
+                       device->getCurrentBufferSizeSamples());
     deviceManager.addAudioCallback(this);
     worker = std::thread(&AudioEngine::workerLoop, this);
 }
@@ -87,6 +99,14 @@ juce::Array<int> AudioEngine::availableSampleRates() {
 }
 
 juce::String AudioEngine::setSampleRate(double rate) {
+    constexpr double allowed[] = { 44100.0, 48000.0, 88200.0, 96000.0 };
+    bool valid = false;
+    for (double supported : allowed)
+        valid |= std::abs(rate - supported) < 1.0;
+    if (!valid || !std::isfinite(rate))
+        return "Unsupported TRANSIT sample-rate choice";
+    if (!availableSampleRates().contains((int)std::lround(rate)))
+        return "Selected sample rate not supported by this device";
     juce::AudioDeviceManager::AudioDeviceSetup setup;
     deviceManager.getAudioDeviceSetup(setup);
     setup.sampleRate = rate;

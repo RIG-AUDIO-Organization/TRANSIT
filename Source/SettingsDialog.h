@@ -42,6 +42,7 @@ private:
     juce::ComboBox deviceBox;
     juce::Label rateCap{ {}, "Sample rate" };
     juce::ComboBox rateBox;
+    juce::ComboBox customRateBox;
     juce::Label bufferCap{ {}, "Buffer size" };
     juce::ComboBox bufferBox;
     juce::Label keyCap{ {}, "Keylock quality" };
