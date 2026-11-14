@@ -270,6 +270,11 @@ add_executable(AutoCueTest Tests/AutoCueTest.cpp)
 target_include_directories(AutoCueTest PRIVATE Source)
 add_test(NAME autocue_test COMMAND AutoCueTest)
 
+add_executable(TempoDriftTest Tests/TempoDriftTest.cpp Source/Deck.cpp)
+target_include_directories(TempoDriftTest PRIVATE Source)
+target_link_libraries(TempoDriftTest PRIVATE signalsmith-stretch)
+add_test(NAME tempo_drift_test COMMAND TempoDriftTest)
+
 add_executable(DecodeTest Tests/DecodeTest.cpp Source/Decode.cpp)
 target_include_directories(DecodeTest PRIVATE Source)
 target_include_directories(DecodeTest SYSTEM PRIVATE ${miniaudio_SOURCE_DIR})
@@ -497,7 +502,7 @@ target_compile_definitions(FxProbe PRIVATE
 # sources internally; on those targets -Werror is attached per first-party
 # source file (above) so upstream sources are never gated by it.
 # ---------------------------------------------------------------------------
-foreach(t ChannelModeTest TrimDialTest NullRender DecodeTest MixerTest KeylockTest WaveformTest MidiQueueTest
+foreach(t ChannelModeTest TrimDialTest NullRender TempoDriftTest DecodeTest MixerTest KeylockTest WaveformTest MidiQueueTest
           LoadScheduleTest DeckLoadTest FxScanTest LibraryTest MidiMapTest
           RecorderTest AnalyzeTest SyncTest DspBench)
   if(MSVC)
