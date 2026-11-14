@@ -239,12 +239,12 @@ inline bool flx4TargetHasDetent(MidiTarget t) {
         || t == MidiTarget::Mid || t == MidiTarget::High;
 }
 
-// FLX4 EQ knobs are inverted (low at bottom, high at top) — invert the
-// hardware value before the detent remap so turning CW increases the
-// app value. Gain/trim is not inverted.
-inline bool flx4TargetNeedsInvert(MidiTarget t) {
-    return t == MidiTarget::Low || t == MidiTarget::Mid
-        || t == MidiTarget::High;
+// FLX4 hardware values use the same direction as the application: moving
+// clockwise increases gain. In particular, EQ must NOT be inverted before
+// the center-detent remap, or clockwise cuts instead of boosts.
+inline float flx4ControlToApp(MidiTarget target, float hardware01) {
+    return flx4TargetHasDetent(target)
+        ? flx4DetentToApp(hardware01) : hardware01;
 }
 
 // Soft takeover ("pickup") for absolute controls: the FLX4 is silent until
