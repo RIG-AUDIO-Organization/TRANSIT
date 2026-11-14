@@ -67,6 +67,11 @@ A control parked at full travel (endpoint) engages on the first tick, so
 a fader or knob left at an extreme does not require a full sweep through
 the app value to take control.
 
+The onscreen mixer orders its knobs TRIM, HIGH, MID, LOW from top to
+bottom, matching the physical mixer. All three FLX4 EQ bands keep their
+documented CC targets, and clockwise travel raises gain (CCW lowers gain).
+EQ hardware values are not inverted before the center-detent remap.
+
 Center-detented hardware knobs (trim, EQ) are remapped before the pickup
 engage: the FLX4 detent sends 0.5, but the app's detent for those targets
 sits at 0.8 normalized (gain unity = 1.0/1.25; EQ 0 dB = 24/30 on the

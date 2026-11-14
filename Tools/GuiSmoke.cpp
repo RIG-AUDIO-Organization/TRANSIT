@@ -417,7 +417,8 @@ int main(int argc, char** argv) {
         window.useViewport(1100, 824);
         if (content.harnessChannelCount() != channels
             || !content.harnessReturnLayoutValid()
-            || !content.harnessDeckLayoutValid()) {
+            || !content.harnessDeckLayoutValid()
+            || !content.harnessEqLayoutValid()) {
             fail("mixer channel mode control clipped at minimum viewport");
             return 1;
         }
@@ -428,8 +429,9 @@ int main(int argc, char** argv) {
     // Pass 1: empty state (before any file is loaded).
     for (const Viewport& vp : kViewports) {
         window.useViewport(vp.w, vp.h);
-        if (!content.harnessDeckLayoutValid()) {
-            fail("deck controls outside panel or transport keys overlap");
+        if (!content.harnessDeckLayoutValid()
+            || !content.harnessEqLayoutValid()) {
+            fail("deck controls or mixer EQ rows outside expected layout");
             return 1;
         }
         snapshot(content, outDir, "empty", vp.w, vp.h);

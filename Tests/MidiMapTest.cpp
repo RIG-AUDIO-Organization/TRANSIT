@@ -272,14 +272,41 @@ int run() {
     check(!lean::flx4TargetHasDetent(lean::MidiTarget::Xfade),
           "xfade no detent");
 
-    // EQ knobs are inverted (low at bottom, high at top).
-    check(lean::flx4TargetNeedsInvert(lean::MidiTarget::Low), "low inverted");
-    check(lean::flx4TargetNeedsInvert(lean::MidiTarget::Mid), "mid inverted");
-    check(lean::flx4TargetNeedsInvert(lean::MidiTarget::High), "high inverted");
-    check(!lean::flx4TargetNeedsInvert(lean::MidiTarget::Gain),
-          "trim not inverted");
-    check(!lean::flx4TargetNeedsInvert(lean::MidiTarget::Tempo),
-          "tempo not inverted");
+    // Each deck's EQ CC maps to its own band. Clockwise travel must boost
+    // (not cut) after center-detent conversion and the final dB mapping.
+    struct EqBinding { int msb; lean::MidiTarget target; };
+    const EqBinding eqBindings[] = {
+        { 0x07, lean::MidiTarget::High },
+        { 0x0B, lean::MidiTarget::Mid },
+        { 0x0F, lean::MidiTarget::Low }
+    };
+    for (int ch = 1; ch <= 2; ++ch) {
+        for (const auto& eq : eqBindings) {
+            const auto* bind = lean::flx4FindValue(ch, eq.msb);
+            check(bind != nullptr && bind->deck == ch - 1
+                      && bind->target == eq.target,
+                  "flx4 EQ band/deck binding preserved");
+            const auto db = [eq](float hardware) {
+                return lean::midiValue(
+                    eq.target, lean::flx4ControlToApp(eq.target, hardware));
+            };
+            check(std::abs(db(0.0f) + 24.0f) < 1e-5f,
+                  "EQ full CCW cuts to -24 dB");
+            check(std::abs(db(0.5f)) < 1e-5f,
+                  "EQ detent stays at 0 dB");
+            check(std::abs(db(1.0f) - 6.0f) < 1e-5f,
+                  "EQ full CW boosts to +6 dB");
+            check(db(0.25f) < db(0.5f) && db(0.5f) < db(0.75f),
+                  "EQ clockwise direction increases gain");
+        }
+    }
+    check(std::abs(lean::midiValue(lean::MidiTarget::Gain,
+                  lean::flx4ControlToApp(lean::MidiTarget::Gain, 0.5f))
+                  - 1.0f) < 1e-6f, "trim center stays unity");
+    check(std::abs(lean::flx4ControlToApp(lean::MidiTarget::Fader, 0.25f)
+                  - 0.25f) < 1e-6f, "fader remains unmodified");
+    check(std::abs(lean::flx4ControlToApp(lean::MidiTarget::Tempo, 0.75f)
+                  - 0.75f) < 1e-6f, "tempo remains unmodified");
 
     if (failures == 0)
         std::printf("MIDIMAP_TEST PASS\n");

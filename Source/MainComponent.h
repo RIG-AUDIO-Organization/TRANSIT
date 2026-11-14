@@ -91,6 +91,29 @@ public:
         }
         return true;
     }
+    // EQ rows follow the physical mixer: HIGH above MID above LOW on both decks.
+    // This is asserted by the GUI smoke test at every supported viewport.
+    bool harnessEqLayoutValid() const {
+        const auto& labels = strips[0].knobCaps;
+        if (labels[0].getText() != "TRIM" || labels[1].getText() != "HIGH"
+            || labels[2].getText() != "MID" || labels[3].getText() != "LOW")
+            return false;
+        for (const auto& s : strips) {
+            if (s.gain.getHeight() <= 0 || s.high.getHeight() <= 0
+                || s.mid.getHeight() <= 0 || s.low.getHeight() <= 0)
+                return false;
+            if (!(s.gain.getY() < s.high.getY() && s.high.getY() < s.mid.getY()
+                  && s.mid.getY() < s.low.getY()))
+                return false;
+        }
+        const juce::Slider* rows[] = { &strips[0].gain, &strips[0].high,
+                                       &strips[0].mid, &strips[0].low };
+        for (int k = 0; k < 4; ++k)
+            if (labels[k].getBounds().getCentreY()
+                != rows[k]->getBounds().getCentreY())
+                return false;
+        return true;
+    }
     // G4: seed the meters to known dB-mapped levels so CI snapshots can see
     // the fill and peak-hold marker without an audio device.
     void harnessSetMeters(float master, float chA, float chB) {

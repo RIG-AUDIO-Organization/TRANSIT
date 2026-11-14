@@ -280,7 +280,7 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
     setWantsKeyboardFocus(true); // transport F-keys start here, then bubble
     audioFormats.registerBasicFormats(); // G6 round 2: duration probes
     const char* names[2] = { "A", "B" };
-    const char* knobNames[4] = { "TRIM", "LOW", "MID", "HIGH" };
+    const char* knobNames[4] = { "TRIM", "HIGH", "MID", "LOW" };
     for (int d = 0; d < 2; ++d) {
         auto& s = strips[d];
         addAndMakeVisible(s.surface);
@@ -1834,10 +1834,10 @@ void MainComponent::resized() {
     chanCaps[0].setBounds(chanRow.removeFromLeft(chanRow.getWidth() / 2));
     chanCaps[1].setBounds(chanRow);
 
-    juce::Slider* knobsA[4] = { &strips[0].gain, &strips[0].low, &strips[0].mid,
-                                &strips[0].high };
-    juce::Slider* knobsB[4] = { &strips[1].gain, &strips[1].low, &strips[1].mid,
-                                &strips[1].high };
+    juce::Slider* knobsA[4] = { &strips[0].gain, &strips[0].high, &strips[0].mid,
+                                &strips[0].low };
+    juce::Slider* knobsB[4] = { &strips[1].gain, &strips[1].high, &strips[1].mid,
+                                &strips[1].low };
     for (int k = 0; k < 4; ++k) {
         auto row = center.removeFromTop(42);
         strips[0].knobCaps[k].setBounds(row.removeFromLeft(56));
