@@ -158,10 +158,13 @@ public:
     // paused + hold -> preview from cue point, release -> back to cue.
     void startCuePreview(int deck) {
         auto& d = mixer.channel(deck & 1).deck;
+        if (d.isCueReturning())
+            return; // do not seek through a fade in progress
         if (d.isPlaying()) {
             d.returnToCueWithFade();
         } else {
             d.setPositionSeconds(d.getCuePointSeconds());
+            d.armCueFadeIn();
             d.play(true);
             previewing[deck & 1] = true;
             mixer.setCue(deck & 1, true);

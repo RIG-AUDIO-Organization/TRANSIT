@@ -32,6 +32,7 @@ void Deck::load(std::vector<float> interleavedStereo, double sampleRate) {
     cueFrame.store(0.0, std::memory_order_seq_cst);
     cueReturnPending.store(false, std::memory_order_seq_cst);
     cueFadeInPending.store(false, std::memory_order_seq_cst);
+    cueFadeInArmed.store(false, std::memory_order_seq_cst);
     playing.store(false, std::memory_order_seq_cst);
     stretchDirty.store(true, std::memory_order_seq_cst);
 }
@@ -63,7 +64,7 @@ void Deck::play(bool shouldPlay) {
     if (shouldPlay) {
         const bool wasRendering = playing.exchange(true, std::memory_order_seq_cst);
         cueReturnPending.store(false, std::memory_order_seq_cst);
-        if (!wasRendering)
+        if (!wasRendering && cueFadeInArmed.exchange(false, std::memory_order_seq_cst))
             cueFadeInPending.store(true, std::memory_order_seq_cst);
     } else {
         cueReturnPending.store(false, std::memory_order_seq_cst);
@@ -162,6 +163,7 @@ void Deck::applyTransportEnvelope(float* left, float* right, int numSamples) {
             playing.store(false, std::memory_order_seq_cst);
             position.store(cueFrame.load(std::memory_order_seq_cst),
                            std::memory_order_seq_cst);
+            cueFadeInArmed.store(true, std::memory_order_seq_cst);
             // Flush time-stretcher history before the next launch from cue.
             stretchDirty.store(true, std::memory_order_seq_cst);
             for (int j = i + 1; j < numSamples; ++j)

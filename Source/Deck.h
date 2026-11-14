@@ -75,6 +75,7 @@ public:
     // the audio thread, THEN rewind and pause. Message thread never seeks
     // through a sounding waveform.
     void returnToCueWithFade();
+    void armCueFadeIn() { cueFadeInArmed.store(true, std::memory_order_seq_cst); }
     bool isCueReturning() const {
         return cueReturnPending.load(std::memory_order_seq_cst);
     }
@@ -124,8 +125,9 @@ private:
     // Message thread owns commands; audio thread owns the gain envelope.
     std::atomic<bool> cueReturnPending{ false };
     std::atomic<bool> cueFadeInPending{ false };
+    std::atomic<bool> cueFadeInArmed{ false };
     std::atomic<double> cueFrame{ 0.0 };
-    float cueEnvelope = 0.0f; // audio thread only
+    float cueEnvelope = 1.0f; // audio thread only
 
     std::atomic<int> infoFrames{ 0 };
     std::atomic<double> infoRate{ 44100.0 };

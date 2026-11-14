@@ -62,6 +62,42 @@ int run() {
     deck.load(makeStereo(framesC, 1.0, 110.0), 0.0);
     check(close(deck.getLengthSeconds(), 1.0), "zero rate falls back");
 
+    // Cue release must remain audible briefly, fade to zero and rewind only
+    // after the fade; the next cue preview fades in. Normal playback remains
+    // bit-transparent and should not change the unity/null-render baseline.
+    {
+        lean::Deck preview;
+        const auto src = makeStereo((int)kRateA * 3, kRateA, 110.0);
+        preview.load(src, kRateA);
+        preview.setOutputRate(kRateA);
+        preview.setCuePointSeconds(0.5);
+        preview.setPositionSeconds(0.5);
+        preview.armCueFadeIn();
+        preview.play(true);
+        float left[256] = {}, right[256] = {};
+        preview.render(left, right, 256);
+        check(preview.isPlaying(), "cue preview starts playing");
+        preview.returnToCueWithFade();
+        check(preview.isCueReturning() && !preview.isPlaying(),
+              "cue release reports paused while soft tail is rendering");
+        bool finished = false;
+        for (int block = 0; block < 8; ++block) {
+            for (int i = 0; i < 256; ++i)
+                left[i] = right[i] = 0.0f;
+            preview.render(left, right, 256);
+            if (!preview.isRendering()) { finished = true; break; }
+        }
+        check(finished, "cue fade-out finishes within 8 blocks");
+        check(close(preview.getPositionSeconds(), 0.5),
+              "cue rewind happens after fade-out");
+        preview.play(true);
+        for (int i = 0; i < 256; ++i)
+            left[i] = right[i] = 0.0f;
+        preview.render(left, right, 256);
+        check(std::abs(left[0]) < 0.02f, "cue re-entry starts near silence");
+        check(preview.isPlaying(), "cue re-entry resumes transport");
+    }
+
     if (failures == 0)
         std::printf("DECKLOAD_TEST PASS\n");
     else
