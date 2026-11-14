@@ -96,23 +96,33 @@ public:
     bool harnessEqLayoutValid() const {
         const auto& labels = strips[0].knobCaps;
         if (labels[0].getText() != "TRIM" || labels[1].getText() != "HIGH"
-            || labels[2].getText() != "MID" || labels[3].getText() != "LOW")
+            || labels[2].getText() != "MID" || labels[3].getText() != "LOW"
+            || labels[4].getText() != "FILTER")
             return false;
         for (const auto& s : strips) {
             if (s.gain.getHeight() <= 0 || s.high.getHeight() <= 0
-                || s.mid.getHeight() <= 0 || s.low.getHeight() <= 0)
+                || s.mid.getHeight() <= 0 || s.low.getHeight() <= 0
+                || s.color.getHeight() <= 0)
                 return false;
             if (!(s.gain.getY() < s.high.getY() && s.high.getY() < s.mid.getY()
-                  && s.mid.getY() < s.low.getY()))
+                  && s.mid.getY() < s.low.getY()
+                  && s.low.getY() < s.color.getY()))
                 return false;
         }
         const juce::Slider* rows[] = { &strips[0].gain, &strips[0].high,
-                                       &strips[0].mid, &strips[0].low };
-        for (int k = 0; k < 4; ++k)
+                                       &strips[0].mid, &strips[0].low,
+                                       &strips[0].color };
+        for (int k = 0; k < 5; ++k)
             if (labels[k].getBounds().getCentreY()
                 != rows[k]->getBounds().getCentreY())
                 return false;
         return true;
+    }
+    bool harnessColorNeutral() const {
+        return strips[0].color.getValue() == 0.0
+            && strips[1].color.getValue() == 0.0
+            && engine.getColorFilter(0) == 0.0f
+            && engine.getColorFilter(1) == 0.0f;
     }
     // G4: seed the meters to known dB-mapped levels so CI snapshots can see
     // the fill and peak-hold marker without an audio device.
@@ -260,6 +270,8 @@ private:
                           juce::Slider::TextBoxBelow };
         juce::Slider high{ juce::Slider::RotaryHorizontalVerticalDrag,
                            juce::Slider::TextBoxBelow };
+        juce::Slider color{ juce::Slider::RotaryHorizontalVerticalDrag,
+                            juce::Slider::TextBoxBelow };
         juce::Slider fader{ juce::Slider::LinearVertical, juce::Slider::NoTextBox };
         juce::Label header;
         juce::Label bpmValue;
@@ -271,7 +283,7 @@ private:
         juce::Label cueReadout;
         juce::TextButton zoomInBtn{ "+" };
         juce::TextButton zoomOutBtn{ "-" };
-        juce::Label knobCaps[4];
+        juce::Label knobCaps[5];
         juce::Label stateChip; // G5: dedicated state word (EMPTY/…/ERROR)
         juce::Label status;    // G5 payload: filename or error text
         juce::Label time;

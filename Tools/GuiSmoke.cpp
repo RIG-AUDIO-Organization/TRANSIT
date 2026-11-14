@@ -418,7 +418,8 @@ int main(int argc, char** argv) {
         if (content.harnessChannelCount() != channels
             || !content.harnessReturnLayoutValid()
             || !content.harnessDeckLayoutValid()
-            || !content.harnessEqLayoutValid()) {
+            || !content.harnessEqLayoutValid()
+            || !content.harnessColorNeutral()) {
             fail("mixer channel mode control clipped at minimum viewport");
             return 1;
         }
@@ -430,7 +431,8 @@ int main(int argc, char** argv) {
     for (const Viewport& vp : kViewports) {
         window.useViewport(vp.w, vp.h);
         if (!content.harnessDeckLayoutValid()
-            || !content.harnessEqLayoutValid()) {
+            || !content.harnessEqLayoutValid()
+            || !content.harnessColorNeutral()) {
             fail("deck controls or mixer EQ rows outside expected layout");
             return 1;
         }

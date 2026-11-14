@@ -177,6 +177,49 @@ int run() {
         check(std::abs(boost - 2.0) < 0.1, "high boost x", boost, 2.0);
     }
 
+    // Colour filter null at neutral, stereo operation and polarity of sweep.
+    // The native effect must not rely on the external FX rack.
+    {
+        lean::Mixer neutral;
+        neutral.setOutputRate(kRate);
+        neutral.channel(0).deck.load(srcA, kRate);
+        neutral.channel(0).deck.play(true);
+        neutral.setCrossfader(0.0f);
+        neutral.setColorFilter(0, 0.0f);
+        std::vector<float> l, r;
+        renderAll(neutral, l, r, frames);
+        std::vector<float> reference((std::size_t)frames);
+        for (int i = 0; i < frames; ++i)
+            reference[(std::size_t)i] = srcA[(std::size_t)i * 2u];
+        check(peakDiff(l, reference) < 4.0e-5, "color center is dry bypass");
+
+        auto measure = [&](float pos, double hz) {
+            lean::Mixer m;
+            m.setOutputRate(kRate);
+            const auto src = sineStereo(frames, hz, hz, 0.4f);
+            m.channel(0).deck.load(src, kRate);
+            m.channel(0).deck.play(true);
+            m.setCrossfader(0.0f);
+            m.setColorFilter(0, pos);
+            std::vector<float> outL, outR;
+            renderAll(m, outL, outR, frames);
+            const int start = frames / 2;
+            std::vector<float> tail(outL.begin() + start, outL.end());
+            std::vector<float> baseline((std::size_t)(frames - start));
+            for (int j = start; j < frames; ++j)
+                baseline[(std::size_t)(j - start)] = src[(std::size_t)j * 2u];
+            return rms(tail) / rms(baseline);
+        };
+        check(measure(-0.98f, 10000.0) < 0.15,
+              "color left low-pass removes highs");
+        check(measure(-0.85f, 120.0) > 0.65,
+              "color left low-pass retains bass");
+        check(measure(0.98f, 120.0) < 0.15,
+              "color right high-pass removes bass");
+        check(measure(0.85f, 10000.0) > 0.65,
+              "color right high-pass retains highs");
+    }
+
     // Regression: crossfader smooths to deck B even with A stopped.
     // Do not snap after the new target is assigned.
     {

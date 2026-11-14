@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -58,6 +59,47 @@ void run() {
                          AutoCueMode::FirstAudio).detected, "quiet sustained intro");
     expect(!detectAutoCue(nullptr, 100, rate, AutoCueMode::SmartOnset).detected,
            "null guard");
+
+    // Full-volume tracks starting at sample zero were previously missed
+    // because the percentile noise estimate was multiplied above the signal.
+    auto immediate = make();
+    segment(immediate, 0.0, 4.0, 0.35f);
+    const auto now = detectAutoCue(immediate.data(), (int)immediate.size() / 2,
+                                  rate, AutoCueMode::FirstAudio);
+    expect(now.detected && now.seconds < 0.02, "immediate full-level start");
+
+    auto whisper = make();
+    segment(whisper, 1.25, 2.6, 0.0005f);
+    auto quietOnset = detectAutoCue(whisper.data(), (int)whisper.size() / 2,
+                                   rate, AutoCueMode::FirstAudio);
+    expect(quietOnset.detected && std::abs(quietOnset.seconds - 1.24) < 0.06,
+           "very quiet but sustained audio");
+
+    auto hiss = make();
+    segment(hiss, 0.0, 5.0, 0.001f);
+    segment(hiss, 2.75, 4.5, 0.3f);
+    const auto hissOnset = detectAutoCue(hiss.data(), (int)hiss.size() / 2, rate,
+                                         AutoCueMode::FirstAudio);
+    expect(hissOnset.detected && hissOnset.seconds > 2.65
+               && hissOnset.seconds < 2.8, "ignore constant noise intro");
+
+    auto rightOnly = make();
+    for (int i = rate; i < 2 * rate; ++i)
+        rightOnly[(std::size_t)i * 2u + 1u] = 0.03f;
+    const auto rightCue = detectAutoCue(rightOnly.data(),
+        (int)rightOnly.size() / 2, rate, AutoCueMode::FirstAudio);
+    expect(rightCue.detected && rightCue.seconds > 0.95
+               && rightCue.seconds < 1.05, "single-channel opening");
+
+    auto nonFinite = make();
+    segment(nonFinite, 1.5, 2.5, 0.07f);
+    nonFinite[(std::size_t)(rate * 2) * 2u] = std::numeric_limits<float>::quiet_NaN();
+    expect(detectAutoCue(nonFinite.data(), (int)nonFinite.size() / 2, rate,
+                         AutoCueMode::SmartOnset).detected,
+           "isolated nonfinite sample cannot poison detection");
+    expect(!detectAutoCue(silence.data(), (int)silence.size() / 2,
+                          std::numeric_limits<double>::infinity(),
+                          AutoCueMode::SmartOnset).detected, "invalid rate guard");
 }
 } // namespace
 int main() {

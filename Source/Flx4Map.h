@@ -124,8 +124,8 @@ inline constexpr std::uint8_t kFlx4ResyncSysEx[] = {
     0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x04, 0x05, 0x00, 0x50, 0x02, 0xF7
 };
 
-// Value table: deck sections on ch 1/2, mixer on ch 7. CFX knobs ride the
-// per-deck AUX send (hardware filter position -> send level).
+// Factory CFX knobs default to the built-in bipolar FILTER on their decks;
+// AUX sends remain available on FX-page controls and via learned MIDI.
 inline const Flx4ValueBind* flx4ValueTable(int& count) {
     static const Flx4ValueBind table[] = {
         // deck 1 (ch 1) / deck 2 (ch 2): trim, EQ, tempo, channel fader
@@ -135,11 +135,11 @@ inline const Flx4ValueBind* flx4ValueTable(int& count) {
         { 1, 0x0B, 0, MidiTarget::Mid },   { 2, 0x0B, 1, MidiTarget::Mid },
         { 1, 0x0F, 0, MidiTarget::Low },   { 2, 0x0F, 1, MidiTarget::Low },
         { 1, 0x13, 0, MidiTarget::Fader }, { 2, 0x13, 1, MidiTarget::Fader },
-        // mixer (ch 7): crossfader, phones mix, CFX -> per-deck send
+        // mixer (ch 7): crossfader, phones mix, CFX -> per-deck COLOR FILTER
         { 7, 0x1F, 0, MidiTarget::Xfade },
         { 7, 0x0C, 0, MidiTarget::Blend },
-        { 7, 0x17, 0, MidiTarget::Send },
-        { 7, 0x18, 1, MidiTarget::Send },
+        { 7, 0x17, 0, MidiTarget::Color },
+        { 7, 0x18, 1, MidiTarget::Color },
     };
     count = (int)(sizeof(table) / sizeof(table[0]));
     return table;

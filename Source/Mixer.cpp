@@ -120,11 +120,64 @@ float Eq3::process(int channel, float x) {
     return bands[2][channel & 1].process(y);
 }
 
+void ColorFilter::process(float& left, float& right, float smooth) {
+    if (resetPending.exchange(false, std::memory_order_seq_cst)) {
+        ic1[0] = ic1[1] = ic2[0] = ic2[1] = 0.0f;
+        remaining = 0;
+        direction = 0;
+    }
+    const float pos = position.next(smooth);
+    constexpr float deadZone = 0.02f;
+    const float strength = std::abs(pos);
+    if (strength <= deadZone) {
+        // Neutral must be precisely dry: skip the DSP, not merely a wide cutoff.
+        if (direction != 0) {
+            ic1[0] = ic1[1] = ic2[0] = ic2[1] = 0.0f;
+            direction = 0;
+        }
+        remaining = 0;
+        return;
+    }
+    const int nextDirection = pos < 0.0f ? -1 : 1;
+    if (nextDirection != direction) {
+        ic1[0] = ic1[1] = ic2[0] = ic2[1] = 0.0f;
+        direction = nextDirection;
+        remaining = 0;
+    }
+    const float amount = std::clamp((strength - deadZone) / (1.0f - deadZone), 0.0f, 1.0f);
+    if (remaining-- <= 0) {
+        const double rate = sampleRate.load(std::memory_order_seq_cst);
+        const double top = std::min(18000.0, rate * 0.43);
+        const double bottom = nextDirection < 0 ? 70.0 : 28.0;
+        const double frequency = nextDirection < 0
+            ? top * std::pow(bottom / top, (double)amount)
+            : bottom * std::pow(top / bottom, (double)amount);
+        g = (float)std::tan(3.14159265358979323846 * frequency / rate);
+        remaining = 15;
+    }
+    // TPT 2-pole state-variable LPF/HPF: stable under live cutoff modulation.
+    constexpr float k = 1.41421356237f;
+    const float a1 = 1.0f / (1.0f + g * (g + k));
+    const float wet = std::clamp((strength - deadZone) / 0.10f, 0.0f, 1.0f);
+    float* channels[2] = { &left, &right };
+    for (int ch = 0; ch < 2; ++ch) {
+        const float input = *channels[ch];
+        const float v3 = input - ic2[ch];
+        const float v1 = a1 * (ic1[ch] + g * v3);
+        const float v2 = ic2[ch] + g * v1;
+        ic1[ch] = 2.0f * v1 - ic1[ch];
+        ic2[ch] = 2.0f * v2 - ic2[ch];
+        const float filtered = direction < 0 ? v2 : input - k * v1 - v2;
+        *channels[ch] = input + wet * (filtered - input);
+    }
+}
+
 void Mixer::setOutputRate(double rate) {
     outputRate.store(rate > 0.0 ? rate : 44100.0, std::memory_order_seq_cst);
     for (auto& s : strips) {
         s.deck.setOutputRate(rate);
         s.eq.setRate(rate);
+        s.color.setRate(rate);
     }
 }
 
@@ -134,8 +187,10 @@ void Mixer::setEq(int ch, double lowDb, double midDb, double highDb) {
 }
 
 void Mixer::reset() {
-    for (auto& s : strips)
+    for (auto& s : strips) {
         s.eq.reset();
+        s.color.reset();
+    }
 }
 
 void Mixer::eqGains(int ch, double& lo, double& mi, double& hi) const {
@@ -148,6 +203,7 @@ void Mixer::eqGains(int ch, double& lo, double& mi, double& hi) const {
 void Mixer::snap() {
     for (auto& s : strips) {
         s.trim.snap(s.trim.next(1.0f));
+        s.color.snap();
         s.fader.snap(s.fader.next(1.0f));
         for (auto& send : s.sends)
             send.snap(send.next(1.0f));
@@ -216,8 +272,9 @@ void Mixer::render(float* left, float* right, float* phonesL, float* phonesR,
                 const float trimFader = strip.trim.next(coeff) * strip.fader.next(coeff);
                 const float gMaster = trimFader * w;
                 const float gCue = strip.trim.current();
-                const float l = strip.eq.process(0, tmpL[i]);
-                const float r = strip.eq.process(1, tmpR[i]);
+                float l = strip.eq.process(0, tmpL[i]);
+                float r = strip.eq.process(1, tmpR[i]);
+                strip.color.process(l, r, coeff);
                 left[done + i] += l * gMaster;
                 right[done + i] += r * gMaster;
                 // Post-fader aux taps (pre-crossfader).

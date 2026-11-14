@@ -280,7 +280,7 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
     setWantsKeyboardFocus(true); // transport F-keys start here, then bubble
     audioFormats.registerBasicFormats(); // G6 round 2: duration probes
     const char* names[2] = { "A", "B" };
-    const char* knobNames[4] = { "TRIM", "HIGH", "MID", "LOW" };
+    const char* knobNames[5] = { "TRIM", "HIGH", "MID", "LOW", "FILTER" };
     for (int d = 0; d < 2; ++d) {
         auto& s = strips[d];
         addAndMakeVisible(s.surface);
@@ -338,11 +338,12 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
         addAndMakeVisible(s.low);
         addAndMakeVisible(s.mid);
         addAndMakeVisible(s.high);
+        addAndMakeVisible(s.color);
         addAndMakeVisible(s.fader);
         addAndMakeVisible(s.stateChip);
         addAndMakeVisible(s.status);
         addAndMakeVisible(s.time);
-        for (int k = 0; k < 4; ++k) {
+        for (int k = 0; k < 5; ++k) {
             addAndMakeVisible(s.knobCaps[k]);
             s.knobCaps[k].setText(knobNames[k], juce::dontSendNotification);
             s.knobCaps[k].setJustificationType(juce::Justification::centred);
@@ -482,6 +483,17 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
             eq->onValueChange = [this, d] { applyEq(d); };
         }
 
+        // Default built-in COLOR FILTER: left LPF, center dry, right HPF.
+        s.color.setRange(-1.0, 1.0, 0.001);
+        s.color.setValue(0.0, juce::dontSendNotification);
+        s.color.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+        s.color.getProperties().set("bipolar", 1);
+        s.color.setDoubleClickReturnValue(true, 0.0);
+        s.color.setTooltip("FILTER: counterclockwise LPF / center OFF / clockwise HPF");
+        s.color.onValueChange = [this, d] {
+            engine.setColorFilter(d, (float)strips[d].color.getValue());
+        };
+
         s.fader.setRange(0.0, 1.0, 0.001);
         s.fader.setValue(1.0);
         s.fader.onValueChange = [this, d] {
@@ -502,6 +514,7 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
         arm(s.low, lean::MidiTarget::Low);
         arm(s.mid, lean::MidiTarget::Mid);
         arm(s.high, lean::MidiTarget::High);
+        arm(s.color, lean::MidiTarget::Color);
 
         s.stateChip.setText("EMPTY", juce::dontSendNotification);
         s.stateChip.setColour(juce::Label::textColourId, DJLook::dimInk);
@@ -801,6 +814,7 @@ juce::Slider* MainComponent::sliderFor(int deck, lean::MidiTarget target) {
         case lean::MidiTarget::Low: return &strips[deck & 1].low;
         case lean::MidiTarget::Mid: return &strips[deck & 1].mid;
         case lean::MidiTarget::High: return &strips[deck & 1].high;
+        case lean::MidiTarget::Color: return &strips[deck & 1].color;
         case lean::MidiTarget::Xfade: return &xfade;
         case lean::MidiTarget::Master: return &topBar.masterKnob;
         case lean::MidiTarget::Blend: return &cueBlend;
@@ -1548,6 +1562,7 @@ void MainComponent::timerCallback() {
         reflect(strips[d].low, lo);
         reflect(strips[d].mid, mi);
         reflect(strips[d].high, hi);
+        reflect(strips[d].color, engine.getColorFilter(d));
         chanShown[d] = std::max(DJLook::meterUnit(chPeak[d]),
                                 chanShown[d] - kMeterFall);
         chanMeters[d].setLevel(chanShown[d]);
@@ -1820,7 +1835,7 @@ void MainComponent::resized() {
     area.removeFromLeft(12);
     layoutDeck(strips[1], area);
 
-    // Mixer strip: glass panel, header, channel caps, 4 knob rows,
+    // Mixer strip: glass panel, header, channel caps, 5 knob rows,
     // PFL + faders, xfade row pinned to the bottom (DJM-style).
     mixerGlass.setBounds(center);
     center = center.reduced(10, 8);
@@ -1834,12 +1849,12 @@ void MainComponent::resized() {
     chanCaps[0].setBounds(chanRow.removeFromLeft(chanRow.getWidth() / 2));
     chanCaps[1].setBounds(chanRow);
 
-    juce::Slider* knobsA[4] = { &strips[0].gain, &strips[0].high, &strips[0].mid,
-                                &strips[0].low };
-    juce::Slider* knobsB[4] = { &strips[1].gain, &strips[1].high, &strips[1].mid,
-                                &strips[1].low };
-    for (int k = 0; k < 4; ++k) {
-        auto row = center.removeFromTop(42);
+    juce::Slider* knobsA[5] = { &strips[0].gain, &strips[0].high, &strips[0].mid,
+                                &strips[0].low, &strips[0].color };
+    juce::Slider* knobsB[5] = { &strips[1].gain, &strips[1].high, &strips[1].mid,
+                                &strips[1].low, &strips[1].color };
+    for (int k = 0; k < 5; ++k) {
+        auto row = center.removeFromTop(38);
         strips[0].knobCaps[k].setBounds(row.removeFromLeft(56));
         const int cw = row.getWidth() / 2;
         knobsA[k]->setBounds(row.removeFromLeft(cw).reduced(10, 2));

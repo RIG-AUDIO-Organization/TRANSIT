@@ -135,6 +135,8 @@ public:
     }
 
     void setCrossfader(float v) { mixer.setCrossfader(v); }
+    void setColorFilter(int deck, float v) { mixer.setColorFilter(deck, v); }
+    float getColorFilter(int deck) const { return mixer.colorFilterLevel(deck); }
     void setMaster(float v) { mixer.setMaster(v); }
     void setPhonesLevel(float v) { mixer.setPhonesLevel(v); }
     void setCue(int deck, bool on) = delete; // use setPfl / cue preview below
