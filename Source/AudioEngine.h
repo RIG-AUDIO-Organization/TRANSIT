@@ -120,12 +120,25 @@ public:
                 sync[d] = false;
                 continue;
             }
-            mixer.channel(d).deck.setTempo(t);
+            double corrected = t;
+            if (beatGrids[d].phaseReliable && beatGrids[d ^ 1].phaseReliable
+                && isPlaying(d) && isPlaying(d ^ 1)) {
+                const double errorBeats = lean::phaseErrorBeats(
+                    getPositionSeconds(d), beatGrids[d].originSeconds, own,
+                    getPositionSeconds(d ^ 1), beatGrids[d ^ 1].originSeconds,
+                    bpm[d ^ 1]);
+                corrected = lean::phaseCorrectedTempo(t, errorBeats);
+            }
+            mixer.channel(d).deck.setTempo(corrected);
         }
     }
     void setGain(int deck, float g) { mixer.channel(deck & 1).deck.setGain(g); }
     void setKeylock(int deck, bool on) { mixer.channel(deck & 1).deck.setKeylock(on); }
     void play(int deck, bool p) { mixer.channel(deck & 1).deck.play(p); }
+    // F9: arm both decks for the same audio callback, no UI-thread offset.
+    void startBothSampleAligned() {
+        startBothPending.store(true, std::memory_order_seq_cst);
+    }
     bool isPlaying(int deck) const { return mixer.channel(deck & 1).deck.isPlaying(); }
     double getPositionSeconds(int deck) const {
         return mixer.channel(deck & 1).deck.getPositionSeconds();
@@ -395,6 +408,7 @@ private:
         std::vector<float> stereo;
         double rate = 44100.0;
         double bpm = 0.0;
+        lean::BeatGrid beatGrid;
         double selectedCueSeconds = 0.0;
         double detectedCueSeconds = 0.0;
         bool selectedManual = false;
@@ -450,9 +464,10 @@ private:
     bool keylockEcoState = false;
     bool pfl[2] = { false, false };
     bool previewing[2] = { false, false };
-    bool sync[2] = { false, false };
+    std::atomic<bool> sync[2]{ false, false }; // MIDI thread may release lock
     BeatMode mode = BeatMode::Free;
     double bpm[2] = { 0.0, 0.0 };
+    lean::BeatGrid beatGrids[2]; // committed only on message thread
     std::unique_ptr<juce::MidiInput> midiIn;
     std::unique_ptr<juce::MidiOutput> midiOut; // LED echo / SysEx resync
     lean::MidiGrid midiGrid;
@@ -465,6 +480,7 @@ private:
     std::atomic<int> learnCc{ -1 };
     std::atomic<uint64_t> learnStamp{ 0 };
     uint64_t blockFrame = 0; // audio thread only
+    std::atomic<bool> startBothPending{ false };
     double deviceRate = 44100.0; // set in AboutToStart, audio thread only
     std::atomic<long long> maxRenderUsUs{ 0 };
     std::atomic<long long> overruns{ 0 };

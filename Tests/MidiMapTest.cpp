@@ -107,7 +107,27 @@ int run() {
     check(tb != nullptr && tb->target == lean::MidiTarget::Tempo
               && tb->deck == 0,
           "flx4 deck1 tempo");
-    check(lean::flx4FindValue(2, 0x00) != nullptr, "flx4 deck2 tempo");
+    const auto* tempoB = lean::flx4FindValue(2, 0x00);
+    check(tempoB != nullptr && tempoB->deck == 1
+              && tempoB->target == lean::MidiTarget::Tempo,
+          "flx4 deck2 tempo");
+    for (int ch = 1; ch <= 2; ++ch) {
+        lean::MidiGrid pitchGrid;
+        pitchGrid.bind14(ch, 0x00, ch - 1, lean::MidiTarget::Tempo);
+        int boundMsb = -1;
+        check(pitchGrid.ingest14(ch, 0x00, 64, &boundMsb) >= 0
+                  && boundMsb == 0, "pitch fader MSB delivered");
+        const int fine = pitchGrid.ingest14(ch, 0x20, 1, &boundMsb);
+        check(fine == ((64 << 7) | 1) && boundMsb == 0x00,
+              "pitch fader LSB delivered without new MSB");
+        const float center = lean::midiValue(
+            lean::MidiTarget::Tempo, (float)fine / 16383.0f);
+        check(std::abs(center - 1.0f) < 0.001f,
+              "pitch center near unity both decks");
+        check(lean::midiValue(lean::MidiTarget::Tempo, 0.0f) < 1.0f
+                  && lean::midiValue(lean::MidiTarget::Tempo, 1.0f) > 1.0f,
+              "pitch fader direction slow to fast");
+    }
     check(lean::flx4FindValue(1, 0x13) != nullptr
               && lean::flx4FindValue(1, 0x13)->target == lean::MidiTarget::Fader,
           "flx4 deck1 fader");
