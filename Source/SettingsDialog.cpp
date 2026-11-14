@@ -51,8 +51,10 @@ SettingsDialog::SettingsDialog(AudioEngine& e, bool showBpmInit,
             const auto error = engine.setSampleRate(44100.0);
             if (error.isNotEmpty())
                 statsLabel.setText(error, juce::dontSendNotification);
+            refreshRatesAndBuffers();
         }
-        refreshRatesAndBuffers();
+        // Selecting Custom must keep its list visible while the active
+        // sample rate remains 44.1 kHz, until the user chooses a new one.
     };
     customRateBox.onChange = [this] {
         const int rate = customRateBox.getSelectedId();
