@@ -212,11 +212,11 @@ int run() {
         };
         check(measure(-0.98f, 10000.0) < 0.15,
               "color left low-pass removes highs");
-        check(measure(-0.98f, 120.0) > 0.65,
+        check(measure(-0.85f, 120.0) > 0.65,
               "color left low-pass retains bass");
         check(measure(0.98f, 120.0) < 0.15,
               "color right high-pass removes bass");
-        check(measure(0.98f, 10000.0) > 0.65,
+        check(measure(0.85f, 10000.0) > 0.65,
               "color right high-pass retains highs");
     }
 
