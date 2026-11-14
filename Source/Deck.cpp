@@ -29,7 +29,9 @@ void Deck::load(std::vector<float> interleavedStereo, double sampleRate) {
     }
     stagedReady.store(true, std::memory_order_seq_cst);
     position.store(0.0, std::memory_order_seq_cst);
-    cueFrame = 0.0;
+    cueFrame.store(0.0, std::memory_order_seq_cst);
+    cueReturnPending.store(false, std::memory_order_seq_cst);
+    cueFadeInPending.store(false, std::memory_order_seq_cst);
     playing.store(false, std::memory_order_seq_cst);
     stretchDirty.store(true, std::memory_order_seq_cst);
 }
@@ -57,6 +59,26 @@ void Deck::setKeylockEco(bool ecoMode) {
     stretchDirty.store(true, std::memory_order_seq_cst);
 }
 
+void Deck::play(bool shouldPlay) {
+    if (shouldPlay) {
+        const bool wasRendering = playing.exchange(true, std::memory_order_seq_cst);
+        cueReturnPending.store(false, std::memory_order_seq_cst);
+        if (!wasRendering)
+            cueFadeInPending.store(true, std::memory_order_seq_cst);
+    } else {
+        cueReturnPending.store(false, std::memory_order_seq_cst);
+        cueFadeInPending.store(false, std::memory_order_seq_cst);
+        playing.store(false, std::memory_order_seq_cst);
+    }
+}
+
+void Deck::returnToCueWithFade() {
+    if (playing.load(std::memory_order_seq_cst))
+        cueReturnPending.store(true, std::memory_order_seq_cst);
+    else
+        setPositionSeconds(getCuePointSeconds());
+}
+
 void Deck::setPositionSeconds(double seconds) {
     const double rate = fileRate.load(std::memory_order_seq_cst);
     const int frames = infoFrames.load(std::memory_order_seq_cst);
@@ -67,14 +89,17 @@ void Deck::setPositionSeconds(double seconds) {
 void Deck::setCuePointSeconds(double seconds) {
     const double rate = fileRate.load(std::memory_order_seq_cst);
     const int frames = infoFrames.load(std::memory_order_seq_cst);
-    cueFrame = std::clamp(seconds * rate, 0.0, (double)std::max(0, frames - 1));
+    cueFrame.store(
+        std::clamp(seconds * rate, 0.0, (double)std::max(0, frames - 1)),
+        std::memory_order_seq_cst);
 }
 
 double Deck::getCuePointSeconds() const {
     const int frames = infoFrames.load(std::memory_order_seq_cst);
     if (frames <= 0)
         return 0.0;
-    return cueFrame / fileRate.load(std::memory_order_seq_cst);
+    return cueFrame.load(std::memory_order_seq_cst)
+        / fileRate.load(std::memory_order_seq_cst);
 }
 
 double Deck::getPositionSeconds() const {
@@ -116,6 +141,34 @@ void Deck::adoptStaged() {
         infoRate.store(active->rate, std::memory_order_seq_cst);
     }
     stagedReady.store(false, std::memory_order_seq_cst);
+}
+
+void Deck::applyTransportEnvelope(float* left, float* right, int numSamples) {
+    // 8 ms fade-out ensures release never cuts across a nonzero sample;
+    // 5 ms fade-in preserves the original transient without a switch click.
+    const double rate = outputRate.load(std::memory_order_seq_cst);
+    const float outStep = 1.0f / (float)std::max(1, (int)(rate * 0.008));
+    const float inStep = 1.0f / (float)std::max(1, (int)(rate * 0.005));
+    if (cueFadeInPending.exchange(false, std::memory_order_seq_cst))
+        cueEnvelope = 0.0f;
+    for (int i = 0; i < numSamples; ++i) {
+        const bool returning = cueReturnPending.load(std::memory_order_seq_cst);
+        cueEnvelope = returning ? std::max(0.0f, cueEnvelope - outStep)
+                                : std::min(1.0f, cueEnvelope + inStep);
+        left[i] *= cueEnvelope;
+        right[i] *= cueEnvelope;
+        if (returning && cueEnvelope <= 0.0f
+            && cueReturnPending.exchange(false, std::memory_order_seq_cst)) {
+            playing.store(false, std::memory_order_seq_cst);
+            position.store(cueFrame.load(std::memory_order_seq_cst),
+                           std::memory_order_seq_cst);
+            // Flush time-stretcher history before the next launch from cue.
+            stretchDirty.store(true, std::memory_order_seq_cst);
+            for (int j = i + 1; j < numSamples; ++j)
+                left[j] = right[j] = 0.0f;
+            break;
+        }
+    }
 }
 
 void Deck::render(float* left, float* right, int numSamples) {
@@ -167,13 +220,13 @@ void Deck::render(float* left, float* right, int numSamples) {
     if (keylock.load(std::memory_order_seq_cst)
         && stretchReady.load(std::memory_order_seq_cst)) {
         renderStretch(buf, left, right, numSamples, tempoEff);
-        return;
+    } else {
+        const double step = (fileRateLocal / outputRateLocal) * tempoEff;
+        if (!(step > 0.0) || !std::isfinite(step))
+            return;
+        renderResample(buf, left, right, numSamples, step);
     }
-
-    const double step = (fileRateLocal / outputRateLocal) * tempoEff;
-    if (!(step > 0.0) || !std::isfinite(step))
-        return;
-    renderResample(buf, left, right, numSamples, step);
+    applyTransportEnvelope(left, right, numSamples);
 }
 
 void Deck::renderResample(const DeckBuffer& buf, float* left, float* right,

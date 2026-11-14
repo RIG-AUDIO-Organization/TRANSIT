@@ -70,11 +70,25 @@ public:
     void setKeylock(bool enabled);
     bool isKeylock() const { return keylock.load(std::memory_order_seq_cst); }
     void setKeylockEco(bool eco);
-    void play(bool shouldPlay) { playing.store(shouldPlay); }
+    void play(bool shouldPlay);
+    // CDJ Cue release: fade the currently audible transport to silence on
+    // the audio thread, THEN rewind and pause. Message thread never seeks
+    // through a sounding waveform.
+    void returnToCueWithFade();
+    bool isCueReturning() const {
+        return cueReturnPending.load(std::memory_order_seq_cst);
+    }
+    // The UI sees release immediately; mixer still renders the short tail.
+    bool isRendering() const {
+        return playing.load(std::memory_order_seq_cst);
+    }
     void setPositionSeconds(double seconds);
     void setCuePointSeconds(double seconds);
     double getCuePointSeconds() const;
-    bool isPlaying() const { return playing.load(std::memory_order_seq_cst); }
+    bool isPlaying() const {
+        return playing.load(std::memory_order_seq_cst)
+            && !cueReturnPending.load(std::memory_order_seq_cst);
+    }
     double getPositionSeconds() const;
     double getLengthSeconds() const;
     int getNumFrames() const { return infoFrames.load(std::memory_order_seq_cst); }
@@ -93,6 +107,7 @@ private:
                         int numSamples, double step);
     void renderStretch(const DeckBuffer& buf, float* left, float* right,
                        int numSamples, double tempoEff);
+    void applyTransportEnvelope(float* left, float* right, int numSamples);
 
     std::shared_ptr<const DeckBuffer> active; // audio thread only
     std::shared_ptr<DeckBuffer> staged;       // guarded by stageMutex
@@ -106,7 +121,11 @@ private:
     std::atomic<double> position{ 0.0 }; // fractional frame, file domain
     SmoothFloat gain{ 1.0f };
     std::atomic<bool> playing{ false };
-    double cueFrame = 0.0; // message thread only
+    // Message thread owns commands; audio thread owns the gain envelope.
+    std::atomic<bool> cueReturnPending{ false };
+    std::atomic<bool> cueFadeInPending{ false };
+    std::atomic<double> cueFrame{ 0.0 };
+    float cueEnvelope = 0.0f; // audio thread only
 
     std::atomic<int> infoFrames{ 0 };
     std::atomic<double> infoRate{ 44100.0 };

@@ -159,8 +159,7 @@ public:
     void startCuePreview(int deck) {
         auto& d = mixer.channel(deck & 1).deck;
         if (d.isPlaying()) {
-            d.play(false);
-            d.setPositionSeconds(d.getCuePointSeconds());
+            d.returnToCueWithFade();
         } else {
             d.setPositionSeconds(d.getCuePointSeconds());
             d.play(true);
@@ -173,8 +172,7 @@ public:
         if (!previewing[deck])
             return;
         auto& d = mixer.channel(deck).deck;
-        d.play(false);
-        d.setPositionSeconds(d.getCuePointSeconds());
+        d.returnToCueWithFade();
         previewing[deck] = false;
         mixer.setCue(deck, pfl[deck]);
     }
