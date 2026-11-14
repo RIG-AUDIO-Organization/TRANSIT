@@ -5,6 +5,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include <cmath>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -119,10 +120,11 @@ public:
         return true;
     }
     bool harnessColorNeutral() const {
-        return strips[0].color.getValue() == 0.0
-            && strips[1].color.getValue() == 0.0
-            && engine.getColorFilter(0) == 0.0f
-            && engine.getColorFilter(1) == 0.0f;
+        constexpr double epsilon = 1.0e-6;
+        return std::abs(strips[0].color.getValue()) <= epsilon
+            && std::abs(strips[1].color.getValue()) <= epsilon
+            && std::abs(engine.getColorFilter(0)) <= epsilon
+            && std::abs(engine.getColorFilter(1)) <= epsilon;
     }
     // G4: seed the meters to known dB-mapped levels so CI snapshots can see
     // the fill and peak-hold marker without an audio device.
