@@ -248,7 +248,13 @@ void AudioEngine::applyMidiEvent(const lean::MidiEvent& ev) {
     // until a control is moved, so the first gesture must not jump the app
     // value. Engage when the hardware reaches or crosses the app value.
     float v01 = ev.value01;
-    if (flx4Active.load(std::memory_order_seq_cst)
+    const bool factoryPitch = flx4Active.load(std::memory_order_seq_cst)
+        && target == lean::MidiTarget::Tempo && ev.cc == 0x00
+        && (ev.channel == 1 || ev.channel == 2);
+    // Physical 14-bit pitch faders are absolute controls: don't dead-zone
+    // their initial movements behind the pickup gate. Software tempo snaps
+    // to the hardware position on movement; MIDI LSB increments remain live.
+    if (flx4Active.load(std::memory_order_seq_cst) && !factoryPitch
         && (target == lean::MidiTarget::Tempo || target == lean::MidiTarget::Gain
             || target == lean::MidiTarget::Fader || target == lean::MidiTarget::Low
             || target == lean::MidiTarget::Mid || target == lean::MidiTarget::High
@@ -269,6 +275,8 @@ void AudioEngine::applyMidiEvent(const lean::MidiEvent& ev) {
     const float v = lean::midiValue(target, v01);
     switch (target) {
         case lean::MidiTarget::Tempo:
+            if (factoryPitch)
+                sync[deck].store(false, std::memory_order_seq_cst);
             mixer.channel(deck).deck.setTempo((double)v);
             break;
         case lean::MidiTarget::Gain:
@@ -567,7 +575,8 @@ void AudioEngine::runLoadJob(const LoadJob& job) {
     r.ok = true;
     r.fileName = job.fileName;
     r.path = job.path;
-    r.bpm = lean::detectBpm(decoded.stereo.data(), frames, rate);
+    r.beatGrid = lean::analyzeBeatGrid(decoded.stereo.data(), frames, rate);
+    r.bpm = r.beatGrid.bpm;
     const auto detected = lean::detectAutoCue(decoded.stereo.data(), frames,
                                               rate, job.cueMode);
     r.detectedCueSeconds = detected.seconds;
@@ -643,6 +652,7 @@ void AudioEngine::handleAsyncUpdate() {
         // this thread, so each field below is observed atomically as a set.
         waves[d] = std::move(r.wave);
         bpm[d] = r.bpm;
+        beatGrids[d] = r.beatGrid;
         names[d] = juce::String(r.fileName);
         errors[d] = {};
         fileLoaded[d] = true;
@@ -753,6 +763,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const*, int,
     for (int i = 0; i < nEv; ++i)
         applyMidiEvent(events[i]);
 
+    if (startBothPending.exchange(false, std::memory_order_seq_cst)) {
+        mixer.channel(0).deck.play(true);
+        mixer.channel(1).deck.play(true);
+    }
     const int64_t t0 = juce::Time::getHighResolutionTicks();
     if (left && right) {
         mixer.render(left, right, phL, phR, numSamples);

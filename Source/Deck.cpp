@@ -85,6 +85,9 @@ void Deck::setPositionSeconds(double seconds) {
     const int frames = infoFrames.load(std::memory_order_seq_cst);
     position.store(std::clamp(seconds * rate, 0.0, (double)std::max(0, frames - 1)),
                    std::memory_order_seq_cst);
+    // Any asynchronous seek invalidates keylock history. Both render paths
+    // publish positions with CAS so an in-flight render cannot undo the seek.
+    stretchDirty.store(true, std::memory_order_seq_cst);
 }
 
 void Deck::setCuePointSeconds(double seconds) {
@@ -235,11 +238,14 @@ void Deck::renderResample(const DeckBuffer& buf, float* left, float* right,
                           int numSamples, double step) {
     const float coeff = smoothCoeff(outputRate.load(std::memory_order_seq_cst));
     double pos = position.load(std::memory_order_seq_cst);
+    const double initialPosition = pos;
     for (int i = 0; i < numSamples; ++i) {
         if (pos >= buf.frames || !std::isfinite(pos)) {
-            position.store(pos, std::memory_order_seq_cst);
-            playing.store(false, std::memory_order_seq_cst);
-            break;
+            double expected = initialPosition;
+            if (position.compare_exchange_strong(expected, pos,
+                                                  std::memory_order_seq_cst))
+                playing.store(false, std::memory_order_seq_cst);
+            return;
         }
         const int idx = (int)pos;
         const float frac = (float)(pos - idx);
@@ -252,7 +258,9 @@ void Deck::renderResample(const DeckBuffer& buf, float* left, float* right,
             * g;
         pos += step;
     }
-    position.store(pos, std::memory_order_seq_cst);
+    double expected = initialPosition;
+    (void)position.compare_exchange_strong(expected, pos,
+                                           std::memory_order_seq_cst);
 }
 
 void Deck::renderStretch(const DeckBuffer& buf, float* left, float* right,
@@ -262,6 +270,8 @@ void Deck::renderStretch(const DeckBuffer& buf, float* left, float* right,
     const float coeff = smoothCoeff(outputRateLocal);
     const double inputStep = fileRateLocal / outputRateLocal;
     double pos = position.load(std::memory_order_seq_cst);
+    double publishedPosition = pos;
+    bool seekSuperseded = false;
     int done = 0;
     while (done < numSamples) {
         const int m = std::min(512, numSamples - done);
@@ -293,7 +303,14 @@ void Deck::renderStretch(const DeckBuffer& buf, float* left, float* right,
                 inL[j] = inR[j] = 0.0f;
             tailOut += m;
         }
-        position.store(pos, std::memory_order_seq_cst);
+        if (!seekSuperseded) {
+            double expected = publishedPosition;
+            if (position.compare_exchange_strong(expected, pos,
+                                                 std::memory_order_seq_cst))
+                publishedPosition = pos;
+            else
+                seekSuperseded = true; // message-thread seek owns position
+        }
 
         float outL[512], outR[512];
         float* inB[2] = { inL, inR };

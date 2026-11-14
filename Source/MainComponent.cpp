@@ -1024,6 +1024,10 @@ const int kFnCodes[8] = { juce::KeyPress::F1Key,  juce::KeyPress::F2Key,
 } // namespace
 
 bool MainComponent::keyPressed(const juce::KeyPress& key) {
+    if (key.getKeyCode() == juce::KeyPress::F9Key) {
+        engine.startBothSampleAligned();
+        return true;
+    }
     const int idx = fnKeyIndex(key.getKeyCode());
     if (idx < 0)
         return false;
