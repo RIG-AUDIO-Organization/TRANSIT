@@ -256,9 +256,13 @@ void Mixer::render(float* left, float* right, float* phonesL, float* phonesR,
         for (int s = 0; s < kChannels; ++s) {
             ChannelStrip& strip = strips[s];
             strip.eq.updateIfNeeded();
-            const bool playing = strip.deck.isPlaying();
+            // Continue rendering an 8ms CUE-release tail even though the
+            // transport/UI already reports paused. Keep it in headphones
+            // until the envelope reaches zero, including with PFL off.
+            const bool playing = strip.deck.isRendering();
             const bool wantCue = doPhones
-                && strip.cue.load(std::memory_order_seq_cst) && playing;
+                && (strip.cue.load(std::memory_order_seq_cst)
+                    || strip.deck.isCueReturning()) && playing;
             if (!playing && !wantCue)
                 continue;
             float tmpL[512], tmpR[512];
