@@ -25,7 +25,8 @@ enum class MidiTarget : int {
     Master,
     Blend,
     Phones,
-    Send, // appended last: persisted maps keep working
+    Send, // persisted target 10 remains unchanged
+    Color, // appended target 11, bipolar LPF / off / HPF
 };
 
 struct MidiBinding {
@@ -37,7 +38,8 @@ struct MidiBinding {
 
 inline bool isDeckTarget(MidiTarget t) {
     return t == MidiTarget::Tempo || t == MidiTarget::Gain || t == MidiTarget::Fader
-        || t == MidiTarget::Low || t == MidiTarget::Mid || t == MidiTarget::High;
+        || t == MidiTarget::Low || t == MidiTarget::Mid || t == MidiTarget::High
+        || t == MidiTarget::Color;
 }
 
 // CC 0..1 to control value in the target's native range. Pure, unit-tested.
@@ -48,6 +50,7 @@ inline float midiValue(MidiTarget t, float v01) {
         case MidiTarget::Gain: return v * 1.25f;
         case MidiTarget::Master: return v * 1.25f;
         case MidiTarget::Phones: return v * 1.25f;
+        case MidiTarget::Color: return 2.0f * v - 1.0f;
         case MidiTarget::Low:
         case MidiTarget::Mid:
         case MidiTarget::High: return -24.0f + v * 30.0f;
@@ -220,7 +223,7 @@ public:
                 return false;
             if (b.channel < 1 || b.channel > 16 || b.cc < 0 || b.cc > 127
                 || b.deck < 0 || b.deck > 1 || target < 0
-                || target > (int)MidiTarget::Send)
+                || target > (int)MidiTarget::Color)
                 return false;
             b.target = (MidiTarget)target;
             next.push_back(b);

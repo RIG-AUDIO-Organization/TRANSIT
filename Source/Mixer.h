@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 
 #include "Deck.h"
 #include "Smooth.h"
@@ -76,9 +77,38 @@ private:
     std::atomic<bool> resetPending{ false }; // consumed on the audio thread
 };
 
+// Original bipolar COLOR FILTER: left low-pass, center dry, right high-pass.
+// Only the audio thread owns filter state; message/MIDI threads write atomics.
+class ColorFilter {
+public:
+    void set(float value) {
+        position.setTarget(std::isfinite(value) ? std::clamp(value, -1.0f, 1.0f) : 0.0f);
+    }
+    float target() const { return position.targetValue(); }
+    void setRate(double rate) {
+        sampleRate.store(std::isfinite(rate) && rate >= 1000.0 ? rate : 44100.0,
+                         std::memory_order_seq_cst);
+        resetPending.store(true, std::memory_order_seq_cst);
+    }
+    void reset() { resetPending.store(true, std::memory_order_seq_cst); }
+    void snap() { position.snap(position.targetValue()); reset(); }
+    void process(float& left, float& right, float smooth);
+
+private:
+    SmoothFloat position{ 0.0f };
+    std::atomic<double> sampleRate{ 44100.0 };
+    std::atomic<bool> resetPending{ false };
+    float ic1[2] = { 0.0f, 0.0f };
+    float ic2[2] = { 0.0f, 0.0f };
+    float g = 0.0f;
+    int remaining = 0; // recalculate coefficients every 16 samples
+    int direction = 0;
+};
+
 struct ChannelStrip {
     Deck deck;
     Eq3 eq;
+    ColorFilter color;
     SmoothFloat trim{ 1.0f };  // 0..2
     SmoothFloat fader{ 1.0f }; // 0..1
     SmoothFloat sends[kAuxBuses]; // post-fader aux taps, 0..1
@@ -106,6 +136,8 @@ public:
     void setCue(int ch, bool on) { strips[ch & 1].cue.store(on); }
     void setCueBlend(float v) { cueBlend.setTarget(std::clamp(v, 0.0f, 1.0f)); }
     void setEq(int ch, double lowDb, double midDb, double highDb);
+    void setColorFilter(int ch, float position) { strips[ch & 1].color.set(position); }
+    float colorFilterLevel(int ch) const { return strips[ch & 1].color.target(); }
     void setTrim(int ch, float v) { strips[ch & 1].trim.setTarget(v); }
     void setFader(int ch, float v) { strips[ch & 1].fader.setTarget(v); }
     void setSend(int ch, int aux, float v) {

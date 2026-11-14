@@ -233,7 +233,8 @@ void AudioEngine::applyMidiEvent(const lean::MidiEvent& ev) {
             || target == lean::MidiTarget::Fader || target == lean::MidiTarget::Low
             || target == lean::MidiTarget::Mid || target == lean::MidiTarget::High
             || target == lean::MidiTarget::Xfade || target == lean::MidiTarget::Blend
-            || target == lean::MidiTarget::Send)) {
+            || target == lean::MidiTarget::Send
+            || target == lean::MidiTarget::Color)) {
         // Center-detented trim/EQ hardware sends 0.5 for unity / 0 dB;
         // the app's normalized detent is 0.8. Preserve clockwise = boost
         // for EQ, then map the detent before pickup to avoid level jumps.
@@ -273,6 +274,7 @@ void AudioEngine::applyMidiEvent(const lean::MidiEvent& ev) {
         case lean::MidiTarget::Blend: mixer.setCueBlend(v); break;
         case lean::MidiTarget::Phones: mixer.setPhonesLevel(v); break;
         case lean::MidiTarget::Send: mixer.setSend(deck, 0, v); break;
+        case lean::MidiTarget::Color: mixer.setColorFilter(deck, v); break;
         case lean::MidiTarget::None: break;
     }
 }
@@ -302,6 +304,8 @@ float AudioEngine::currentTarget01(lean::MidiTarget target, int deck) const {
         case lean::MidiTarget::Xfade: return mixer.xfadeValue();
         case lean::MidiTarget::Blend: return mixer.blendValue();
         case lean::MidiTarget::Send: return mixer.sendLevel(deck, 0);
+        case lean::MidiTarget::Color:
+            return (mixer.colorFilterLevel(deck) + 1.0f) * 0.5f;
         case lean::MidiTarget::Master: return mixer.masterLevel();
         case lean::MidiTarget::Phones: return mixer.phonesLevelValue();
         case lean::MidiTarget::None: break;
