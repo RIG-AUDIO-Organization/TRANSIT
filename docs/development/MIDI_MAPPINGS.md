@@ -30,8 +30,8 @@ two's complement for CCW).
 | Channel fader | 1 / 2 | 0x13 | `Fader` | |
 | Crossfader | 7 | 0x1F | `Xfade` | |
 | Phones mix (BLEND) | 7 | 0x0C | `Blend` | |
-| CFX 1 | 7 | 0x17 | `Send` deck 0 | hardware filter position -> AUX send 0 |
-| CFX 2 | 7 | 0x18 | `Send` deck 1 | hardware filter position -> AUX send 0 |
+| CFX 1 | 7 | 0x17 | `Color` deck 0 | default bipolar LPF / OFF / HPF |
+| CFX 2 | 7 | 0x18 | `Color` deck 1 | default bipolar LPF / OFF / HPF |
 
 ### Actions (notes / relative CCs)
 
@@ -71,6 +71,12 @@ The onscreen mixer orders its knobs TRIM, HIGH, MID, LOW from top to
 bottom, matching the physical mixer. All three FLX4 EQ bands keep their
 documented CC targets, and clockwise travel raises gain (CCW lowers gain).
 EQ hardware values are not inverted before the center-detent remap.
+
+Factory CFX knobs now drive the internal stereo COLOR FILTER: left travel
+low-passes, right travel high-passes, and the center position is dry bypass.
+There is no external plugin dependency. The original AUX sends remain
+available on FX page controls and learned MIDI bindings; the persisted Send
+target retains numeric identity 10, while Color is appended as 11.
 
 Center-detented hardware knobs (trim, EQ) are remapped before the pickup
 engage: the FLX4 detent sends 0.5, but the app's detent for those targets

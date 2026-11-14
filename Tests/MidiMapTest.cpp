@@ -117,12 +117,12 @@ int run() {
           "flx4 crossfader");
     const lean::Flx4ValueBind* s0 = lean::flx4FindValue(7, 0x17);
     const lean::Flx4ValueBind* s1 = lean::flx4FindValue(7, 0x18);
-    check(s0 != nullptr && s0->target == lean::MidiTarget::Send
+    check(s0 != nullptr && s0->target == lean::MidiTarget::Color
               && s0->deck == 0,
-          "flx4 cfx1 -> send deck0");
-    check(s1 != nullptr && s1->target == lean::MidiTarget::Send
+          "flx4 cfx1 -> built-in color filter deck0");
+    check(s1 != nullptr && s1->target == lean::MidiTarget::Color
               && s1->deck == 1,
-          "flx4 cfx2 -> send deck1");
+          "flx4 cfx2 -> built-in color filter deck1");
     check(lean::flx4FindValue(7, 0x0C) != nullptr, "flx4 blend");
     check(lean::flx4FindValue(1, 0x40) == nullptr, "flx4 value miss");
     // Every LSB partner must fit the 0..127 range (msb + 0x20).
@@ -132,6 +132,18 @@ int run() {
             lsbok = false;
     check(lsbok, "flx4 lsb in range");
 
+    check(std::abs(lean::midiValue(lean::MidiTarget::Color, 0.0f) + 1.0f)
+              < 1e-6f, "color full CCW low-pass");
+    check(std::abs(lean::midiValue(lean::MidiTarget::Color, 0.5f))
+              < 1e-6f, "color center off");
+    check(std::abs(lean::midiValue(lean::MidiTarget::Color, 1.0f) - 1.0f)
+              < 1e-6f, "color full CW high-pass");
+    check(!lean::flx4TargetHasDetent(lean::MidiTarget::Color),
+          "color not gain/EQ detent-skewed");
+    lean::MidiMap colorMap;
+    check(colorMap.load("7 23 0 11\n"), "persisted color target appended");
+    check(colorMap.lookup(7, 23)->target == lean::MidiTarget::Color,
+          "color mapping roundtrips");
     // --- DDJ-FLX4 action table (notes + relative CCs) ---
     const lean::Flx4ActionBind* p0 = lean::flx4FindAction(1, 1, 0x0B);
     check(p0 != nullptr && p0->action == lean::Flx4Action::Play
