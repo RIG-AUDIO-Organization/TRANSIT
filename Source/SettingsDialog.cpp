@@ -17,6 +17,9 @@ SettingsDialog::SettingsDialog(AudioEngine& e, bool showBpmInit,
         addAndMakeVisible(cap);
     for (auto* box : { &typeBox, &deviceBox, &rateBox, &bufferBox, &keyBox, &modeBox })
         addAndMakeVisible(box);
+    addAndMakeVisible(customRateBox);
+    customRateBox.setVisible(false);
+    customRateBox.setTooltip("Custom sample rate, if supported by the output device");
     addAndMakeVisible(showBpmButton);
     addAndMakeVisible(statsLabel);
     addAndMakeVisible(clearLibButton);
@@ -42,9 +45,25 @@ SettingsDialog::SettingsDialog(AudioEngine& e, bool showBpmInit,
         }
     };
     rateBox.onChange = [this] {
-        const auto r = rateBox.getText().getIntValue();
-        if (r > 0)
-            engine.setSampleRate((double)r);
+        const bool custom = rateBox.getSelectedId() == 2;
+        customRateBox.setVisible(custom);
+        if (!custom) {
+            const auto error = engine.setSampleRate(44100.0);
+            if (error.isNotEmpty())
+                statsLabel.setText(error, juce::dontSendNotification);
+            refreshRatesAndBuffers();
+        }
+        // Selecting Custom must keep its list visible while the active
+        // sample rate remains 44.1 kHz, until the user chooses a new one.
+    };
+    customRateBox.onChange = [this] {
+        const int rate = customRateBox.getSelectedId();
+        if (rate > 0) {
+            const auto error = engine.setSampleRate((double)rate);
+            if (error.isNotEmpty())
+                statsLabel.setText(error, juce::dontSendNotification);
+            refreshRatesAndBuffers();
+        }
     };
     bufferBox.onChange = [this] {
         const auto b = bufferBox.getText().getIntValue();
@@ -137,8 +156,22 @@ void SettingsDialog::refreshDevices() {
 }
 
 void SettingsDialog::refreshRatesAndBuffers() {
-    fillInts(rateBox, engine.availableSampleRates(),
-             (int)engine.currentSampleRate());
+    const auto supported = engine.availableSampleRates();
+    const int current = (int)std::lround(engine.currentSampleRate());
+    rateBox.clear(juce::dontSendNotification);
+    rateBox.addItem("44.1 kHz (Default)", 1);
+    rateBox.addItem("Custom...", 2);
+    const bool defaultRate = current == 44100;
+    rateBox.setSelectedId(defaultRate ? 1 : 2, juce::dontSendNotification);
+    customRateBox.clear(juce::dontSendNotification);
+    for (const int rate : { 48000, 88200, 96000 }) {
+        if (supported.contains(rate))
+            customRateBox.addItem(juce::String(rate) + " Hz", rate);
+    }
+    if (!defaultRate && customRateBox.indexOfItemId(current) >= 0)
+        customRateBox.setSelectedId(current, juce::dontSendNotification);
+    customRateBox.setVisible(!defaultRate);
+    rateBox.setEnabled(supported.contains(44100) || customRateBox.getNumItems() > 0);
     fillInts(bufferBox, engine.availableBufferSizes(),
              engine.currentBufferSize());
 }
@@ -164,7 +197,14 @@ void SettingsDialog::resized() {
     };
     row(typeCap, typeBox);
     row(deviceCap, deviceBox);
-    row(rateCap, rateBox);
+    {
+        auto r = area.removeFromTop(26);
+        rateCap.setBounds(r.removeFromLeft(130));
+        const int rightW = r.getWidth();
+        rateBox.setBounds(r.removeFromLeft(rightW / 2));
+        customRateBox.setBounds(r);
+    }
+    area.removeFromTop(6);
     row(bufferCap, bufferBox);
     row(keyCap, keyBox);
     row(modeCap, modeBox);
