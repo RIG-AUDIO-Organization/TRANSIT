@@ -5,12 +5,14 @@ name: TRANSIT preview packages
 on:
   push:
     branches:
+      - main
       - 'feat/deck-interface-preview-*'
   pull_request:
     branches: [main]
     paths:
       - 'Source/**'
       - 'CMakeLists.txt'
+      - '.github/workflows/linux.yml'
       - '.github/workflows/preview-build.yml'
   workflow_dispatch:
 
@@ -53,6 +55,9 @@ jobs:
           test -f "$exe"
           mkdir -p package dist
           cp "$exe" package/TRANSIT
+          cp LICENSE package/LICENSE
+          cp docs/THIRD_PARTY_NOTICES.md package/THIRD_PARTY_NOTICES.md
+          cp Source/Assets/OFL.txt package/FONTS_LICENSE.txt
           chmod +x package/TRANSIT
           printf '%s\n' \
             'TRANSIT: UNSIGNED DEVELOPER PREVIEW (Linux x86-64)' \
@@ -61,6 +66,7 @@ jobs:
             'FreeType, Fontconfig, X11, OpenGL and GTK 3.' \
             'On Ubuntu/Debian, install corresponding runtime packages first.' \
             'Run: chmod +x TRANSIT && ./TRANSIT' \
+            'Source code: https://github.com/RIG-AUDIO-Organization/TRANSIT' \
             'This tarball is not an AppImage or fully static package.' \
             > package/README-TESTING.txt
           tar -czf dist/TRANSIT-preview-linux-x86_64.tar.gz -C package .
@@ -96,12 +102,16 @@ jobs:
           if (-not (Test-Path $exe)) { throw "TRANSIT.exe not found at $exe" }
           New-Item -ItemType Directory -Force package, dist | Out-Null
           Copy-Item $exe package/TRANSIT.exe
+          Copy-Item LICENSE package/LICENSE
+          Copy-Item docs/THIRD_PARTY_NOTICES.md package/THIRD_PARTY_NOTICES.md
+          Copy-Item Source/Assets/OFL.txt package/FONTS_LICENSE.txt
           @(
             "TRANSIT: UNSIGNED DEVELOPER PREVIEW (Windows x64)"
             "Not a supported release. Not suitable for live performance."
             "Unzip and run TRANSIT.exe."
             "Windows SmartScreen may warn about unsigned development binaries."
             "No VST3 plug-ins, music files or ASIO drivers are bundled."
+            "Source code: https://github.com/RIG-AUDIO-Organization/TRANSIT"
           ) | Set-Content -Path package/README-TESTING.txt
           Compress-Archive -Path package/* -DestinationPath dist/TRANSIT-preview-windows-x64.zip -Force
           Get-ChildItem dist
